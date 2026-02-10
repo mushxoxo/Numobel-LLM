@@ -27,6 +27,14 @@ def to_snake_case(name):
     # collapse multiple underscores
     return re.sub(r'_+', '_', s2).strip('_')
 
+def extract_wix_image_url(wix_url):
+    if not wix_url or not isinstance(wix_url, str):
+        return wix_url
+    match = re.search(r'wix:image://v1/([^/]+)', wix_url)
+    if match:
+        return f"https://static.wixstatic.com/media/{match.group(1)}"
+    return wix_url
+
 def process_csv(input_file, output_file):
     # Using utf-8-sig to automatically handle any BOMs at the start of the file
     with open(input_file, 'r', encoding='utf-8-sig') as f:
@@ -38,7 +46,15 @@ def process_csv(input_file, output_file):
             
             # Explicit mappings requested
             product['name'] = row.get('Name') or None
-            product['product_link'] = row.get('Product Page Url') or None
+            
+            product_link = row.get('Product Page Url')
+            if product_link:
+                product_link = product_link.strip('/')
+                if product_link.startswith('product-page/'):
+                    product_link = product_link[len('product-page/'):]
+                product['product_link'] = f"https://www.numobel.in/product-page/{product_link}"
+            else:
+                product['product_link'] = None
             try:
                 product['price'] = float(row.get('Price')) if row.get('Price') else None
             except ValueError:
@@ -92,13 +108,13 @@ def process_csv(input_file, output_file):
                     for item in media_items:
                         src = item.get('src')
                         if src:
-                            product['product_image_links'].append(src)
+                            product['product_image_links'].append(extract_wix_image_url(src))
                 except Exception:
                     pass
             if not product['product_image_links']:
                 main_media = row.get('Main Media')
                 if main_media:
-                    product['product_image_links'].append(main_media)
+                    product['product_image_links'].append(extract_wix_image_url(main_media))
 
             # Extract Additional Info Sections
             additional_info_str = row.get('Additional Info Sections')
@@ -150,24 +166,24 @@ def process_csv(input_file, output_file):
             }
             for col in row:
                 if col not in mapped_columns:
-                    snake_col = to_snake_case(col)
+                    snake_col = to_snake_case(str(col)) if col else 'extra_fields'
                     val = row[col]
-                    if val == '':
+                    if val == '' or val is None:
                         product[snake_col] = None
                     else:
                         # try to parse as JSON if looks like array or object, useful for embedded json lists
-                        if val and ((val.startswith('[') and val.endswith(']')) or (val.startswith('{') and val.endswith('}'))):
+                        if isinstance(val, str) and ((val.startswith('[') and val.endswith(']')) or (val.startswith('{') and val.endswith('}'))):
                             try:
                                 product[snake_col] = json.loads(val)
                             except Exception:
                                 product[snake_col] = val
                         else:
                             # Normalize boolean-like strings
-                            if val.lower() == 'true':
+                            if isinstance(val, str) and val.lower() == 'true':
                                 product[snake_col] = True
-                            elif val.lower() == 'false':
+                            elif isinstance(val, str) and val.lower() == 'false':
                                 product[snake_col] = False
-                            elif val.isdigit():
+                            elif isinstance(val, str) and val.isdigit():
                                 try:
                                     product[snake_col] = int(val)
                                 except ValueError:
