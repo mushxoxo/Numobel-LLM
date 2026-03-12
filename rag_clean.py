@@ -205,28 +205,147 @@ def clean_images(links):
 VARIANT_KEYS = ['partition_thickness', 'pull_type', 'worktop_size']
 
 def infer_brand(product):
-    """Infer brand from explicit field or product name."""
+    """
+    Infer brand from explicit CSV field or from product name prefix.
+    5 brands: Rubio Monocoat, Nuacoustics, Nupanel, Nuwork, Nutoy.
+    Fallback: Numobel (generic parent brand).
+    Handles known typos in source data.
+    """
     brand = norm_str(product.get('brand'))
-    if brand:
+    # If the explicit brand is a generic parent ('Numobel'), still run name-based
+    # detection — sub-brands (Nupanel, Nuwork, Nuacoustics) are stored as 'Numobel'
+    # in the source CSV and need to be reclassified from the product name.
+    if brand and brand != 'Numobel':
         return brand
 
     name = (product.get('name') or '').strip()
-    # Order matters: check longer prefixes first
+    # Order matters: more specific prefixes first to avoid greedy fallback.
     brand_prefixes = [
-        ('Rubio Monocoat', 'Rubio Monocoat'),
-        ('Numobel Acoustics', 'Numobel Acoustics'),
-        ('Numobel acoustics', 'Numobel Acoustics'),
-        ('Nupanel', 'Nupanel'),
-        ('NuPANEL', 'Nupanel'),
-        ('Nuwork', 'Nuwork'),
-        ('NuWork', 'Nuwork'),
-        ('Nutoy', 'Nutoy'),
-        ('Numobel', 'Numobel'),
+        # Rubio Monocoat (including typo 'Rubio Moonocoat')
+        ('Rubio Monocoat',    'Rubio Monocoat'),
+        ('Rubio Moonocoat',   'Rubio Monocoat'),
+
+        # Nuacoustics — check all casing/typo variants before generic Numobel
+        ('Numobel Acoustics', 'Nuacoustics'),
+        ('Numobel acoustics', 'Nuacoustics'),   # lowercase typo
+        ('Numoble Acoustics', 'Nuacoustics'),   # spelling typo
+
+        # Nupanel — Open Work Panel products are named OWP-XX
+        ('OWP',               'Nupanel'),
+
+        # Nuwork — workstation systems and mobile storage
+        ('Workstation',       'Nuwork'),
+        ('Storage Closed',    'Nuwork'),
+
+        # Nutoy (including 'Numobel-Toys-...' naming variant)
+        ('Nutoy',             'Nutoy'),
+        ('Numobel-Toys',      'Nutoy'),
+
+        # Generic Numobel fallback
+        ('Numobel',           'Numobel'),
     ]
     for prefix, brand_name in brand_prefixes:
         if name.startswith(prefix) or name.lower().startswith(prefix.lower()):
             return brand_name
 
+    return None
+
+
+# ──────────────────────────────────────────────
+# Product line inference
+# ──────────────────────────────────────────────
+
+# Nutoy: map segment-at-index-1 to canonical product line
+_NUTOY_LINE_MAP = {
+    'On Wheels':                  'On Wheels',
+    'Stacker':                    'Stacker',
+    'Montessori':                 'Montessori',
+    'Montessori Ball Tracker':    'Montessori',
+    'Montessori Object Permanence Box Mini':     'Montessori',
+    'Montessori Object Permanence Box with Drawer': 'Montessori',
+    'Waldorf':                    'Building Block',
+    'Waldorf Vehicles':           'Building Block',
+    'Building Block':             'Building Block',
+    'Wooden':                     'Building Block',   # Domino sets
+    'Balancing':                  'Balancing',
+    'Chinese':                    'Board Games',
+    'Puzzle':                     'Learning',
+    'Puzzle Geometric':           'Learning',
+    'Learning':                   'Learning',
+    'Cuboid':                     'Furniture',
+    'Kiddo':                      'Furniture',
+    'Components':                 'Components',
+    'Component':                  'Components',   # singular variant in 'Numobel-Toys-Component-...'
+    'Toys':                       None,               # skip; use next segment
+}
+
+# Nuacoustics: map segment-at-index-1 to canonical product line
+_NUACOUSTICS_LINE_MAP = {
+    'PET VG':               'PET VG',
+    'PETLight':             'PET Light',
+    'PET Acoustic Sheets':  'PET Plain',
+    'PET Ceiling Baffle':   'PET Ceiling',
+    'PET Ceiling Cloud':    'PET Ceiling',
+    'MDF Perforated':       'MDF Perforated',
+}
+
+
+def infer_product_line(brand, name):
+    """
+    Infer the product line (sub-series) from brand + product name.
+    Returns a string or None.
+    """
+    if not name or not brand:
+        return None
+
+    parts = [p.strip() for p in name.split('-')]
+
+    if brand == 'Nutoy':
+        # Handle 'Numobel-Toys-Component-...' naming variant:
+        # index 0 = 'Numobel', index 1 = 'Toys' (skip), index 2 = 'Component'
+        if len(parts) > 1 and parts[1] == 'Toys' and len(parts) > 2:
+            seg = parts[2]
+        else:
+            seg = parts[1] if len(parts) > 1 else None
+
+        if seg is None:
+            return None
+
+        # Direct lookup — try progressively shorter matches for multi-word segments
+        if seg in _NUTOY_LINE_MAP:
+            mapped = _NUTOY_LINE_MAP[seg]
+            # None means 'skip this segment' — shouldn't happen outside Toys edge case
+            return mapped
+        # Partial match (e.g. 'Montessori Ball Tracker' stored as single segment)
+        for key, val in _NUTOY_LINE_MAP.items():
+            if seg.lower().startswith(key.lower()):
+                return val
+        return None
+
+    if brand == 'Nuacoustics':
+        # Name format: 'Numobel Acoustics-<LINE>-<detail>'
+        # After splitting on '-', parts[0] = 'Numobel Acoustics', parts[1] = line
+        seg = parts[1] if len(parts) > 1 else None
+        if seg is None:
+            return None
+        # Handle 'MDF Perforated' which may be attached to rest of name
+        if seg in _NUACOUSTICS_LINE_MAP:
+            return _NUACOUSTICS_LINE_MAP[seg]
+        # Partial match for variants
+        for key, val in _NUACOUSTICS_LINE_MAP.items():
+            if seg.lower().startswith(key.lower()):
+                return val
+        return None
+
+    if brand == 'Nuwork':
+        if name.startswith('Workstation') or name.startswith('Storage Closed'):
+            return 'Panelsys' if 'Workstation' in name or 'Panelsys' in name else 'Storage'
+        return None
+
+    if brand == 'Nupanel':
+        return 'Open Work Panel'
+
+    # Rubio Monocoat and Numobel: no product line structure
     return None
 
 
@@ -252,10 +371,14 @@ def transform(product):
         else:
             attributes[vk] = []
 
+    brand = infer_brand(product)
+    name  = norm_str(product.get('name'))
+
     return {
-        'name': norm_str(product.get('name')),
+        'name': name,
         'description': clean_html(product.get('product_description')),
-        'brand': infer_brand(product),
+        'brand': brand,
+        'product_line': infer_product_line(brand, name),
         'price': {
             'original': original_price,
             'discounted': discounted_price,
