@@ -26,7 +26,7 @@ st.set_page_config(
 )
 
 # ─── Session Storage ─────────────────────────────────────────────────────────
-SESSIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'temp', 'sessions')
+SESSIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sessions')
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 def _sessions_file():

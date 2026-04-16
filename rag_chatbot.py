@@ -18,9 +18,9 @@ import ollama
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 BASE_DIR        = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE       = os.path.join(BASE_DIR, 'rag_products.json')
+DATA_FILE       = os.path.join(BASE_DIR, 'data', 'clean_products.json')
 CHROMA_DIR      = os.path.join(BASE_DIR, 'chroma_db')
-LOG_FILE        = os.path.join(BASE_DIR, 'rag_chatbot.log')
+LOG_FILE        = os.path.join(BASE_DIR, 'data', 'rag_chatbot.log')
 
 EMBED_MODEL     = 'mxbai-embed-large'
 LLM_MODEL       = 'llama3.2'

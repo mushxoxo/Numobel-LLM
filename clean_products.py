@@ -1,5 +1,5 @@
 """
-prepare_products.py
+clean_products.py
 ===================
 Single-step pipeline: Products.csv → rag_products.json
 
@@ -15,8 +15,8 @@ from html import unescape
 
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-INPUT_FILE  = os.path.join(BASE_DIR, 'Products.csv')
-OUTPUT_FILE = os.path.join(BASE_DIR, 'rag_products.json')
+INPUT_FILE  = os.path.join(BASE_DIR, 'data', 'Products.csv')
+OUTPUT_FILE = os.path.join(BASE_DIR, 'data', 'clean_products.json')
 
 
 # ──────────────────────────────────────────────
