@@ -128,9 +128,141 @@
           "https://static.wixstatic.com/media/c3551d_135b9bb2953e49a9a1a2b33b6ec08645~mv2.jpg",
           "https://static.wixstatic.com/media/c3551d_911cc65ace204f3a93e0d109b34d1d9d~mv2.jpg"
         ]
+      },
+      {
+        "role": "user",
+        "content": "how are you"
+      },
+      {
+        "role": "assistant",
+        "content": "I'm doing well, thank you for asking! It's a pleasure to assist you with any questions or queries you may have about **Nutoy** products.\n\nHow can I help you today? Are you looking for information on specific Nutoy products, or perhaps comparing features and prices of different models?\n\nFeel free to ask me anything, and I'll do my best to provide you with accurate and helpful information.",
+        "images": [
+          "https://static.wixstatic.com/media/c3551d_9809d90ae99a4cc4a536bafdf836b2cc~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_01e9f167da7947a1b6d04d3bed818075~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_32b720851903455081f622f1d29608e9~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_3efff21b95314109817e1e791095fe65~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_f89c48f2f235421ba18ec912fba4dd89~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_ebfd796a475d435389c25efc0aa8dea9~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_3430c54470a542549852e090bf001ad3~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_b29eaacbb0114c23ae644c21a4365de8~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_683c58be2e4a4d6f86bfb8af68704ace~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_1c4946bc2bac4fefbc6500433656b432~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_6cc6406b85ab4474b0f6dc6d090adc82~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_1a94041d62544713ba89b5c469b24207~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_c3104738db1049b097c582169efeda52~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_c052f632eefd4f7e9b943068f1eb9cb1~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_314d807a0d6246518a8ffc612a77ee9f~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_4c92328a75514d3ab91039c664864311~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_de866c541fa54075a1097622cf25ae01~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_983a0d169e014d6aa989bfe538dbad23~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_56e5e14426b549b29b63a66e86ecf946~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_edc765210e8c4ac6bd79f4c23b77df38~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_592440644c1444b4b9ab4138be0e808c~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_fbf24d164046431987f2e156d951e475~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_2f17f816818e4e3497371e0193633cfd~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_258d7e0966034389b8a64adeb76d5fcb~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_c3ada09b3b0c42f6ad089eecc5c9924a~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_48da55ead0244113929d3546a7ff5791~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_a15fb248bc94478385527960604742a7~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_6469de3450aa4c9993becc5b298b4c24~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_ab7d4a7e0dd94a358723673e58212350~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_c97c33d7fadb421881c65b6d0ee2cf0b~mv2.jpg"
+        ]
       }
     ],
-    "total_prompt_tokens": 5491,
-    "total_completion_tokens": 743
+    "total_prompt_tokens": 7472,
+    "total_completion_tokens": 828
+  },
+  "49b5a9d3": {
+    "title": "what are the products of numobel",
+    "created": "2026-04-06T11:42:32.753545",
+    "messages": [
+      {
+        "role": "user",
+        "content": "what are the products of numobel"
+      },
+      {
+        "role": "assistant",
+        "content": "### **Numobel Products**\n\n**Components**\n• **Numobel-Toys-Component-Wooden-Pegs set of 20-Natural**: A set of wooden pegs for Board Games, Ludo Games, Dice Playing Board Games.\n\n**Acoustics-PET VG Series**\n• **Acoustics-PET VG-3**: A decorative wall panel with scientific acoustic absorption.\n| Property | Value |\n|----------|-------|\n| Type    | Decorative Wall Panels |\n| Age Group | N A.  |\n| Material | Birch Plywood  |\n| Dimensions | 300 mm x 300 mm |\n| Thickness | 9 mm         |\n\n• **Acoustics-PET VG-9**: A decorative wall panel with scientific acoustic absorption.\n| Property | Value |\n|----------|-------|\n| Type    | Decorative Wall Panels |\n| Age Group | N A.  |\n| Material | Birch Plywood  |\n| Dimensions | 300 mm x 300 mm |\n| Thickness | 9 mm         |\n\n• **Acoustics-PET VG-13**: A decorative wall panel with scientific acoustic absorption.\n| Property | Value |\n|----------|-------|\n| Type    | Decorative Wall Panels |\n| Age Group | N A.  |\n| Material | Birch Plywood  |\n| Dimensions | 300 mm x 300 mm |\n| Thickness | 9 mm         |\n\nNote: The specifications provided for the Acoustics-PET VG series are similar, suggesting that they may be variations of the same product line.",
+        "images": [
+          "https://static.wixstatic.com/media/c3551d_99eacccec1e848d5917986f8ba055473~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_a9c6f0bead4240a1b2ab09a1860a44fa~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_390c6ea0608341708a9d2a6c2fb054e4~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_21bb6f0a17c94712bddf8c43d106cb52~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_3e6ff5dd04e747dab95fc2f2feaeee36~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_facd0a46da7b4d04836879272eb03ed4~mv2.jpg"
+        ]
+      },
+      {
+        "role": "user",
+        "content": "what is the price of pet accoustic sheets"
+      },
+      {
+        "role": "assistant",
+        "content": "**Price of PET Acoustic Sheets**\n\nThe current price of **Numobel Acoustics-PET Acoustic Sheets-BLUES**, which falls under the **PET Plain** product line, is ₹2640.0.\n\nThis price is applicable for all available sizes and colors mentioned in the product descriptions (e.g., Skins, Greys, Yellows, Greens).",
+        "images": [
+          "https://static.wixstatic.com/media/c3551d_d15152ac6c3d49edafe886b710e30bc3~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_d515af1a310d4f09baa9562c232766b3~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_ab45b82145ff4ba7bafa20e20080ce92~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_a004182806ca4517bdbf798a44a5761c~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_f7b044460891404a80a801e1fc5da7c4~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_b6a88b11ec2d48ccb8edb933544de0c9~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_49da52ef7a3f4992854b1068d31aac72~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_f4826ae4a9584e2fb04bff595a8622c9~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_2be587e13e1d417ab5e9e09bffa12081~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_c7827c6fcad645bda26ee010dadd4c65~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_5321606f282d46f7b27794764c44b6ca~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_7659eb0281ad43179e862dd00c3ffa21~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_c1d78e0db8cf44e3af2345a3e3007e71~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_d3e102dcc7de44af81efff5dbceb42ce~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_51c4124ea1124550960dc89f3a27eec4~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_42b04b3091fd4b01b9ceb2912fee6281~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_10583ee30dec4b82b66c030a888ae84c~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_bcf15521c87b4eb2b45a3e186bcae276~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_b7bb0aa317ea4a619809a6db69531fc6~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_ba33c611a8cf448797785a2eff66f6f1~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_7766bc26394f4b4db4fbe6e0b16addc3~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_dcf4c122250c463090dec1facb908e4d~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_b47d630466f643389bdc21e868bcd61e~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_909a5ecdd67a46948a0b449842c2580f~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_f6edf60f0d6b43039e382d613733badb~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_9f936d15fd2745de9b3232031b5137ac~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_1a8bbdfa60ed403f897e16b2fc7a8bfa~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_b9c3bdebb7e9421e9478857a6c5729ce~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_9ad531bb2dd444828eebe6efb844f813~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_91017919d0204e56882ed7cdf35b62c4~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_ebb05b7c9bec4460baee8838684c5d1e~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_df4fdfbf70334f368fd2177fc1fad063~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_1c6f8ed221444a01a9fb60796d0e72a4~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_b66f32dca4e94f008960aea76dc68dc1~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_18c8aaa7aa98487d92847819f33ebb91~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_8d575416945f4df8bb65239c5cb1d3b4~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_8bc49e4940144daf97949f5bd358a798~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_33d45644a3a445f98c46c439ecb6b104~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_66ad2f2d90db4434bc2bbc797bc29ca7~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_3a6d6d3a3a34488db668fcda23a17c1b~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_276b516d51b8455d8e896173064619d8~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_3b5b582c20e94afcbaca24b2189fac49~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_3b69731730684c93b0bfba5a8b75258e~mv2.jpg"
+        ]
+      },
+      {
+        "role": "user",
+        "content": "give me link for the website"
+      },
+      {
+        "role": "assistant",
+        "content": "I don't have direct access to a website, but I can suggest that you visit the official **Numobel** website or check online marketplaces like Amazon, Flipkart, or HomeDecor websites for more information on their products and prices.\n\nPlease note that the provided context is based on the available product descriptions, specifications, and prices mentioned in Source 1 to Source 5.",
+        "images": [
+          "https://static.wixstatic.com/media/c3551d_21bb6f0a17c94712bddf8c43d106cb52~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_390c6ea0608341708a9d2a6c2fb054e4~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_faaa4f476b664b41a247ff125f5cb440~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_3e6ff5dd04e747dab95fc2f2feaeee36~mv2.jpg",
+          "https://static.wixstatic.com/media/c3551d_facd0a46da7b4d04836879272eb03ed4~mv2.jpg"
+        ]
+      }
+    ],
+    "total_prompt_tokens": 5067,
+    "total_completion_tokens": 467
   }
 }
