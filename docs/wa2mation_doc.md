@@ -397,6 +397,53 @@ When included in a send request, this will auto-create the contact if they don't
 
 ---
 
+## Incoming Webhook Payload
+
+wa2mation forwards incoming WhatsApp messages to your webhook URL via POST. Structure:
+
+```json
+{
+    "contact": {
+        "status": "existing/updated/new",
+        "phone_number": "91XXXXXXXXXX",
+        "uid": "...",
+        "first_name": "...",
+        "last_name": "...",
+        "email": "...",
+        "language_code": "en",
+        "country": "india"
+    },
+    "message": {
+        "whatsapp_business_phone_number_id": "...",
+        "whatsapp_message_id": "wamid...",
+        "replied_to_whatsapp_message_id": "wamid...",
+        "is_new_message": true,
+        "body": "the text the user sent",
+        "status": null,
+        "media": {
+            "type": "image",
+            "link": "...",
+            "caption": null,
+            "mime_type": "image/jpeg",
+            "file_name": "...",
+            "original_filename": "..."
+        }
+    },
+    "whatsapp_webhook_payload": {}
+}
+```
+
+Key fields to use in code:
+
+| Field | Description |
+|---|---|
+| `contact.phone_number` | Sender's phone number — use this to reply |
+| `message.body` | Text content of the incoming message |
+| `message.is_new_message` | `true` for new messages, `false` for status updates |
+| `message.media` | Present when the user sends an image/video/document |
+
+---
+
 ## Relevant Endpoints for the RAG Chatbot
 
 For the Numobel WhatsApp bot, the two endpoints we actually use are:
