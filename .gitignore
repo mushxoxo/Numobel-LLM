@@ -1,4 +1,6 @@
 .env
+implementation.md
+config.json
 __pycache__/
 *.pyc
 chroma_db/
