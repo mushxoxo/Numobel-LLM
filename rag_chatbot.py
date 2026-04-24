@@ -295,32 +295,59 @@ def collect_images_from_hits(hits: list[dict]) -> list[str]:
 
 # ─── Generation ───────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a Numobel company product assistant. Only answer using the provided context.
-    If the answer is not found in the context, say "I don't have that information."
+# Product lines used by the keyword fallback router
+_CAROUSEL_KEYWORDS = {
+    'stacker', 'stackers', 'on wheels', 'montessori', 'nutoy',
+    'rubio', 'monocoat', 'nuacoustics', 'nupanel', 'nuwork',
+    'acoustic', 'panel', 'hardwax',
+}
 
-    FORMATTING RULES (you MUST follow these):
-    1. Always use **bold** for product names and brands.
-    2. Use bullet points (•) for listing features, colors, or sizes.
-    3. When presenting specifications or comparing multiple products, use a Markdown TABLE.
-       Example table format:
-       | Property | Value |
-       |----------|-------|
-       | Brand    | Rubio Monocoat |
-    4. Use headings (### ) to separate sections in longer answers.
-    5. Always include the price with the ₹ symbol.
-    6. Keep answers concise but complete.
-    7. When mentioning a product, state its brand and product line if available.
+SYSTEM_PROMPT = textwrap.dedent("""\
+    You are a Numobel product assistant. Only answer using the provided context.
+    If the answer is not in the context, set content to "I don't have that information."
+
+    You MUST respond with ONLY a valid JSON object — no markdown fences, no extra text:
+    {
+      "message_type": "text" | "interactive" | "media" | "carousel",
+      "content": "<your answer here>",
+      "buttons": ["<label1>", "<label2>", "<label3>"] or null,
+      "image_url": "<url>" or null
+    }
+
+    MESSAGE TYPE RULES:
+    - "interactive" — use when offering category choices or asking the user to pick an option.
+                      Include up to 3 short button labels in "buttons".
+    - "carousel"    — use when showcasing 2+ products from the same product line.
+    - "media"       — use when the user explicitly asks for an image, photo, or picture.
+    - "text"        — use for all other answers (facts, specs, comparisons, prices).
+
+    CONTENT RULES:
+    - Use ₹ symbol for all prices.
+    - Bold product names and brands using **name**.
+    - For greetings, introduce Numobel's 5 brands and offer category buttons.
+    - Keep answers concise but complete.
 """)
+
+
+def _keyword_fallback(query: str) -> dict:
+    """Determine message_type from keywords when LLM returns invalid JSON."""
+    q = query.lower()
+    if any(w in q for w in ('hi', 'hello', 'hey', 'what do you have', 'show me', 'list')):
+        return {'message_type': 'interactive', 'buttons': ['Wood Finishes', 'Wooden Toys', 'Acoustic Panels']}
+    if any(w in q for w in _CAROUSEL_KEYWORDS):
+        return {'message_type': 'carousel', 'buttons': None}
+    if any(w in q for w in ('image', 'photo', 'picture')):
+        return {'message_type': 'media', 'buttons': None}
+    return {'message_type': 'text', 'buttons': None}
 
 
 def generate_answer(query: str, context_chunks: list[dict],
                     history: list[dict] = None) -> dict:
     """
-    Build the RAG prompt and generate an answer via llama3.2.
-    Returns a dict with 'content', 'prompt_tokens', 'completion_tokens'.
+    Build the RAG prompt and generate a structured answer via llama3.2.
+    Returns a dict with: message_type, content, buttons, image_url,
+    prompt_tokens, completion_tokens.
     """
-    # Assemble context block
     context_parts = []
     for i, chunk in enumerate(context_chunks, 1):
         meta = chunk['metadata']
@@ -331,27 +358,74 @@ def generate_answer(query: str, context_chunks: list[dict],
     current_prompt = f"CONTEXT:\n{context_block}\n\nUSER QUERY:\n{query}"
 
     messages = [{'role': 'system', 'content': SYSTEM_PROMPT}]
-
-    # Append memory history
     if history:
         for msg in history[-MEMORY_LIMIT:]:
             messages.append({'role': msg['role'], 'content': msg['content']})
-
     messages.append({'role': 'user', 'content': current_prompt})
 
     response = ollama.chat(model=LLM_MODEL, messages=messages)
-
-    content          = response['message']['content']
+    raw = response['message']['content']
     prompt_tokens     = response.get('prompt_eval_count', 0)
     completion_tokens = response.get('eval_count', 0)
-
     log.debug("TOKENS | prompt=%d completion=%d", prompt_tokens, completion_tokens)
 
+    # Parse structured JSON from LLM
+    try:
+        # Strip markdown fences if the model wraps output anyway
+        cleaned = raw.strip()
+        if cleaned.startswith('```'):
+            cleaned = cleaned.split('```')[1]
+            if cleaned.startswith('json'):
+                cleaned = cleaned[4:]
+        parsed = json.loads(cleaned)
+        message_type = parsed.get('message_type', 'text')
+        content      = parsed.get('content', raw)
+        buttons      = parsed.get('buttons') or None
+        image_url    = parsed.get('image_url') or None
+        log.debug("STRUCTURED | type=%s buttons=%s", message_type, buttons)
+    except (json.JSONDecodeError, ValueError):
+        log.warning("LLM returned non-JSON — using keyword fallback. Raw: %s", raw[:120])
+        fallback  = _keyword_fallback(query)
+        message_type = fallback['message_type']
+        content      = raw
+        buttons      = fallback['buttons']
+        image_url    = None
+
     return {
+        'message_type':      message_type,
         'content':           content,
+        'buttons':           buttons,
+        'image_url':         image_url,
         'prompt_tokens':     prompt_tokens,
         'completion_tokens': completion_tokens,
     }
+
+
+# ─── Training Ingestion ───────────────────────────────────────────────────────
+
+def ingest_qna_pair(pair: dict, collection) -> str:
+    """
+    Upsert a single approved Q&A pair into ChromaDB.
+    pair keys: question, answer, message_type, buttons (optional), product (optional)
+    Returns the document ID.
+    """
+    text = f"Q: {pair['question']}\nA: {pair['answer']}"
+    embedding = get_embedding(text)
+    doc_id = stable_id(text, 0)
+
+    collection.upsert(
+        ids=[doc_id],
+        documents=[text],
+        embeddings=[embedding],
+        metadatas=[{
+            'source':       'approved_training',
+            'message_type': pair.get('message_type', 'text'),
+            'buttons':      json.dumps(pair.get('buttons') or []),
+            'product':      pair.get('product', ''),
+        }],
+    )
+    log.info("INGEST_QNA | id=%s product=%s", doc_id, pair.get('product', ''))
+    return doc_id
 
 
 # ─── CLI Run ──────────────────────────────────────────────────────────────────
@@ -385,7 +459,9 @@ def main():
             hits = retrieve(collection, search_query)
             result = generate_answer(q, hits, history)
 
-            print(f"\n🤖: {result['content']}\n")
+            print(f"\n🤖 [{result['message_type']}]: {result['content']}\n")
+            if result.get('buttons'):
+                print(f"   Buttons: {result['buttons']}")
             print(f"⚡ Tokens: {result['prompt_tokens']} prompt / {result['completion_tokens']} completion\n")
 
             history.append({"role": "user", "content": q})

@@ -4,7 +4,7 @@ config.json
 __pycache__/
 *.pyc
 chroma_db/
-sessions/sessions.json
+sessions/
 CLAUDE.md
 .ipynb_checkpoints/
 data/
