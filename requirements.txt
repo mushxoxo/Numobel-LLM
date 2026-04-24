@@ -1,0 +1,10 @@
+chromadb
+flask
+ollama
+python-dotenv
+requests
+streamlit
+
+# dev / testing
+pytest
+pytest-mock
