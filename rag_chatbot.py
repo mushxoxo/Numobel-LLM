@@ -2,11 +2,12 @@
 RAG Chatbot Core
 ========================================
 Core ingestion, retrieval, and generation logic.
-Imported by web_app.py and usable standalone via CLI.
+Imported by app/webhook.py and usable standalone via CLI.
 """
 
 import json
 import os
+import re
 import sys
 import logging
 import textwrap
@@ -33,7 +34,6 @@ TOP_K           = 5             # retrieve top-k chunks
 # ====== USER CONFIGURATION ======
 MEMORY_LIMIT    = 5             # Max previous conversation turns to remember
 REWRITE_QUERY   = True          # Set False to disable query reformulation
-USE_NATIVE_IMAGES = True        # True = Streamlit columns layout; False = Pillow collage
 # ================================
 
 
@@ -371,15 +371,13 @@ def generate_answer(query: str, context_chunks: list[dict],
 
     # Parse structured JSON from LLM
     try:
-        # Strip markdown fences if the model wraps output anyway
+        # Strip markdown fences — handles ```json\n{...}``` and ```\n{...}```
         cleaned = raw.strip()
         if cleaned.startswith('```'):
-            cleaned = cleaned.split('```')[1]
-            if cleaned.startswith('json'):
-                cleaned = cleaned[4:]
+            cleaned = re.sub(r'^```[a-z]*\n?', '', cleaned).rstrip('`').strip()
         parsed = json.loads(cleaned)
         message_type = parsed.get('message_type', 'text')
-        content      = parsed.get('content', raw)
+        content      = parsed.get('content', '')
         buttons      = parsed.get('buttons') or None
         image_url    = parsed.get('image_url') or None
         log.debug("STRUCTURED | type=%s buttons=%s", message_type, buttons)
@@ -387,9 +385,11 @@ def generate_answer(query: str, context_chunks: list[dict],
         log.warning("LLM returned non-JSON — using keyword fallback. Raw: %s", raw[:120])
         fallback  = _keyword_fallback(query)
         message_type = fallback['message_type']
-        content      = raw
-        buttons      = fallback['buttons']
-        image_url    = None
+        # Try to extract a content string from the broken output before giving up
+        m = re.search(r'"content"\s*:\s*"([^"]*)"', raw)
+        content   = m.group(1) if m else "Sorry, I couldn't process that. Please try again."
+        buttons   = fallback['buttons']
+        image_url = None
 
     return {
         'message_type':      message_type,

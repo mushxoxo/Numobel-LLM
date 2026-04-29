@@ -77,7 +77,16 @@ def test_generate_answer_fallback_on_invalid_json(dummy_chunks):
         from rag_chatbot import generate_answer
         result = generate_answer("hi", dummy_chunks)
     assert result['message_type'] == 'interactive'
-    assert result['content'] == 'This is plain text'
+    # Raw LLM garbage is no longer sent to users — static fallback message returned instead
+    assert "try again" in result['content'].lower()
+
+
+def test_generate_answer_fallback_extracts_partial_content(dummy_chunks):
+    partial = '{"message_type": "text", "content": "Great product!", "buttons":'
+    with patch('rag_chatbot.ollama.chat', return_value=_mock_ollama_response(partial)):
+        from rag_chatbot import generate_answer
+        result = generate_answer("tell me about rubio", dummy_chunks)
+    assert result['content'] == 'Great product!'
 
 
 def test_generate_answer_includes_tokens(dummy_chunks):
