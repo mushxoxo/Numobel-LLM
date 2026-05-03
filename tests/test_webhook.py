@@ -104,3 +104,30 @@ def test_webhook_returns_500_on_exception(client):
         resp = client.post("/webhook", json=INCOMING)
     assert resp.status_code == 500
     assert resp.json["status"] == "error"
+
+
+def test_webhook_routes_admin_command_to_admin_handler(client):
+    with patch("app.webhook.needs_admin_handling", return_value=True), \
+         patch("app.webhook.handle_admin") as mock_admin, \
+         patch("app.webhook.dispatch") as mock_dispatch:
+        resp = client.post("/webhook", json={
+            "contact": {"phone_number": "919999999999"},
+            "message": {"body": ":admin on"},
+        })
+    assert resp.json["status"] == "success"
+    mock_admin.assert_called_once()
+    mock_dispatch.assert_not_called()  # RAG pipeline bypassed
+
+
+def test_webhook_skips_admin_for_regular_users(client):
+    with patch("app.webhook.needs_admin_handling", return_value=False), \
+         patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.rewrite_query", return_value="hi"), \
+         patch("app.webhook.rag.retrieve", return_value=[]), \
+         patch("app.webhook.rag.generate_answer", return_value=RAG_RESULT), \
+         patch("app.webhook.dispatch") as mock_dispatch, \
+         patch("app.webhook.save_history"), \
+         patch("app.webhook.handle_admin") as mock_admin:
+        client.post("/webhook", json=INCOMING)
+    mock_dispatch.assert_called_once()
+    mock_admin.assert_not_called()

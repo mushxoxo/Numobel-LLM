@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import rag_chatbot as rag
 from app.router import dispatch
 from app.history import load_history, save_history
+from app.admin import is_admin, needs_admin_handling, handle_admin
 
 load_dotenv()
 
@@ -62,6 +63,11 @@ def webhook():
         if message_id and _is_duplicate(message_id):
             log.debug("WEBHOOK | duplicate message_id=%s — ignored", message_id)
             return jsonify({"status": "ignored"})
+
+        # Admin commands bypass the RAG pipeline entirely
+        if needs_admin_handling(phone, user_message):
+            handle_admin(phone, user_message, collection)
+            return jsonify({"status": "success"})
 
         history      = load_history(phone)
         search_query = rag.rewrite_query(user_message, history)

@@ -7,18 +7,18 @@ load_dotenv()
 
 log = logging.getLogger('rag_chatbot')
 
-_API_KEY    = os.getenv("WA2MATION_API_KEY")
-_VENDOR_UID = os.getenv("WA2MATION_VENDOR_UID")
-_URL        = f"https://wa2mation.com/api/{_VENDOR_UID}/contact/send-message"
-_HEADERS    = {"Authorization": f"Bearer {_API_KEY}", "Content-Type": "application/json"}
-_TIMEOUT    = 10  # seconds
+_TIMEOUT = 10
 
 
 def send_text(phone: str, message: str) -> requests.Response:
+    api_key    = os.getenv("WA2MATION_API_KEY")
+    vendor_uid = os.getenv("WA2MATION_VENDOR_UID")
+    url     = f"https://wa2mation.com/api/{vendor_uid}/contact/send-message"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     resp = requests.post(
-        _URL,
+        url,
         json={"phone_number": phone, "message_body": message},
-        headers=_HEADERS,
+        headers=headers,
         timeout=_TIMEOUT,
     )
     if resp.status_code != 200:
