@@ -177,6 +177,7 @@ def _refine_with_llm(pair: dict, suggestion: str) -> dict:
     response = ollama.chat(
         model='llama3.2',
         messages=[{"role": "user", "content": prompt}],
+        format='json',
     )
     raw = response['message']['content'].strip()
     try:
