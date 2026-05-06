@@ -164,15 +164,19 @@ def _send_pair_for_review(phone: str, pair: dict):
 
 def _refine_with_llm(pair: dict, suggestion: str) -> dict:
     prompt = (
-        "Refine this WhatsApp chatbot Q&A pair based on the admin's suggestion.\n"
-        f"Question: {pair['question']}\n"
-        f"Current answer: {pair['answer']}\n"
-        f"Current message_type: {pair.get('message_type', 'text')}\n"
-        f"Admin suggestion: {suggestion}\n\n"
-        "Reply with ONLY a JSON object with these keys: "
+        "Refine this WhatsApp chatbot Q&A pair based on the suggestion.\n\n"
+        "Current pair:\n"
+        f"  question: {pair['question']}\n"
+        f"  answer: {pair['answer']}\n"
+        f"  message_type: {pair.get('message_type', 'text')}\n"
+        f"  buttons: {pair.get('buttons')}\n"
+        f"  image_url: {pair.get('image_url')}\n\n"
+        f"Suggestion: {suggestion}\n\n"
+        "IMPORTANT: Only change the fields the suggestion explicitly asks to change. "
+        "Keep message_type, buttons, and image_url exactly as they are unless the suggestion specifically asks to modify them.\n\n"
+        "Reply with a JSON object with keys: "
         "answer (string), message_type (text|interactive|media|carousel), "
-        "buttons (list of up to 3 strings or null), image_url (string or null).\n"
-        "No markdown fences, no commentary."
+        "buttons (list of up to 3 strings or null), image_url (string or null)."
     )
     response = ollama.chat(
         model='llama3.2',
