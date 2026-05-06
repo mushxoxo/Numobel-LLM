@@ -202,28 +202,49 @@ def test_cancel_in_training_suggest_returns_to_review(mock_config):
 
 # ─── _refine_with_llm unit tests ─────────────────────────────────────────────
 
-def test_refine_with_llm_parses_full_json_response():
-    """Suggestion that changes message_type should update the full pair."""
+def test_refine_with_llm_uses_claude_when_api_key_set():
+    """When ANTHROPIC_API_KEY is set, refinement uses Claude, not Ollama."""
     pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    llm_json = json.dumps({
-        "answer": "Updated answer.",
-        "message_type": "media",
-        "buttons": None,
-        "image_url": "https://example.com/img.jpg",
-    })
-    mock_resp = {"message": {"content": llm_json}}
-    with patch("app.admin.ollama.chat", return_value=mock_resp):
-        result = admin_module._refine_with_llm(pair, "send media with product image")
-    assert result["answer"] == "Updated answer."
-    assert result["message_type"] == "media"
-    assert result["image_url"] == "https://example.com/img.jpg"
+    llm_json = json.dumps({"answer": "Claude answer.", "message_type": "text", "buttons": None, "image_url": None})
+    mock_content = MagicMock(); mock_content.text = llm_json
+    mock_message = MagicMock(); mock_message.content = [mock_content]
+    mock_client = MagicMock(); mock_client.messages.create.return_value = mock_message
+
+    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}), \
+         patch("app.admin.ollama.chat") as mock_ollama, \
+         patch("anthropic.Anthropic", return_value=mock_client):
+        result = admin_module._refine_with_llm(pair, "improve answer")
+
+    mock_ollama.assert_not_called()
+    assert result["answer"] == "Claude answer."
+
+
+def test_refine_with_llm_falls_back_to_ollama_without_api_key():
+    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
+    llm_json = json.dumps({"answer": "Ollama answer.", "message_type": "text", "buttons": None, "image_url": None})
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("app.admin.ollama.chat", return_value={"message": {"content": llm_json}}) as mock_ollama:
+        result = admin_module._refine_with_llm(pair, "improve answer")
+    mock_ollama.assert_called_once()
+    assert result["answer"] == "Ollama answer."
+
+
+def test_normalize_refined_corrects_text_with_buttons():
+    """LLM returns text + buttons → should become interactive."""
+    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
+    llm_json = json.dumps({"answer": "A.", "message_type": "text", "buttons": ["Buy", "Learn More"], "image_url": None})
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("app.admin.ollama.chat", return_value={"message": {"content": llm_json}}):
+        result = admin_module._refine_with_llm(pair, "add buttons")
+    assert result["message_type"] == "interactive"
+    assert result["buttons"] == ["Buy", "Learn More"]
 
 
 def test_refine_with_llm_falls_back_to_text_on_bad_json():
     """If LLM returns plain text instead of JSON, answer is updated, rest unchanged."""
     pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    mock_resp = {"message": {"content": "Plain improved answer text."}}
-    with patch("app.admin.ollama.chat", return_value=mock_resp):
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("app.admin.ollama.chat", return_value={"message": {"content": "Plain improved answer text."}}):
         result = admin_module._refine_with_llm(pair, "make it better")
     assert result["answer"] == "Plain improved answer text."
     assert result["message_type"] == "text"  # unchanged

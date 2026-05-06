@@ -76,37 +76,83 @@ def append_approved(pair: dict) -> None:
         f.write(json.dumps(pair, ensure_ascii=False) + '\n')
 
 
+_REFINE_PROMPT_TEMPLATE = (
+    "Refine this WhatsApp chatbot Q&A pair based on the suggestion.\n\n"
+    "Current pair:\n"
+    "  question: {question}\n"
+    "  answer: {answer}\n"
+    "  message_type: {message_type}\n"
+    "  buttons: {buttons}\n"
+    "  image_url: {image_url}\n\n"
+    "Suggestion: {suggestion}\n\n"
+    "WhatsApp message type rules:\n"
+    "  - 'interactive': has buttons (2-3 short labels), no image\n"
+    "  - 'media': has image_url, no buttons\n"
+    "  - 'text': plain text only, no buttons, no image\n"
+    "  - 'carousel': multiple product cards, no buttons, no image\n\n"
+    "IMPORTANT: Only change fields the suggestion explicitly asks to change. "
+    "Keep unchanged fields exactly as they are.\n\n"
+    "Reply with a JSON object: "
+    "{{\"answer\": \"...\", \"message_type\": \"text|interactive|media|carousel\", "
+    "\"buttons\": [...or null], \"image_url\": \"...or null\"}}"
+)
+
+
+def _normalize_refined(updated: dict, original: dict) -> dict:
+    mt        = updated.get('message_type', original.get('message_type', 'text'))
+    buttons   = updated.get('buttons',   original.get('buttons'))
+    image_url = updated.get('image_url', original.get('image_url'))
+
+    if mt == 'text' and buttons:
+        mt = 'interactive'
+    if mt == 'text' and image_url:
+        mt = 'media'
+    if mt == 'interactive':
+        image_url = None
+    if mt in ('media', 'text', 'carousel'):
+        buttons = None
+
+    return {
+        **original,
+        'answer':       updated.get('answer', original['answer']),
+        'message_type': mt,
+        'buttons':      buttons,
+        'image_url':    image_url,
+    }
+
+
 def refine_with_llm(pair: dict, suggestion: str) -> dict:
-    prompt = (
-        "Refine this WhatsApp chatbot Q&A pair based on the suggestion.\n\n"
-        "Current pair:\n"
-        f"  question: {pair['question']}\n"
-        f"  answer: {pair['answer']}\n"
-        f"  message_type: {pair.get('message_type', 'text')}\n"
-        f"  buttons: {pair.get('buttons')}\n"
-        f"  image_url: {pair.get('image_url')}\n\n"
-        f"Suggestion: {suggestion}\n\n"
-        "IMPORTANT: Only change the fields the suggestion explicitly asks to change. "
-        "Keep message_type, buttons, and image_url exactly as they are unless the suggestion specifically asks to modify them.\n\n"
-        "Reply with a JSON object with keys: "
-        "answer (string), message_type (text|interactive|media|carousel), "
-        "buttons (list of up to 3 strings or null), image_url (string or null)."
+    import os
+    prompt = _REFINE_PROMPT_TEMPLATE.format(
+        question=pair['question'],
+        answer=pair['answer'],
+        message_type=pair.get('message_type', 'text'),
+        buttons=pair.get('buttons'),
+        image_url=pair.get('image_url'),
+        suggestion=suggestion,
     )
-    response = ollama.chat(
-        model='llama3.2',
-        messages=[{'role': 'user', 'content': prompt}],
-        format='json',
-    )
-    raw = response['message']['content'].strip()
+
+    api_key = os.getenv('ANTHROPIC_API_KEY')
+    if api_key:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model='claude-sonnet-4-6',
+            max_tokens=512,
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+        raw = message.content[0].text.strip()
+    else:
+        response = ollama.chat(
+            model='llama3.2',
+            messages=[{'role': 'user', 'content': prompt}],
+            format='json',
+        )
+        raw = response['message']['content'].strip()
+
     try:
         updated = json.loads(raw)
-        return {
-            **pair,
-            'answer':       updated.get('answer', pair['answer']),
-            'message_type': updated.get('message_type', pair.get('message_type', 'text')),
-            'buttons':      updated.get('buttons', pair.get('buttons')),
-            'image_url':    updated.get('image_url', pair.get('image_url')),
-        }
+        return _normalize_refined(updated, pair)
     except (json.JSONDecodeError, AttributeError):
         return {**pair, 'answer': raw}
 
