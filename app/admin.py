@@ -155,7 +155,7 @@ def _send_pair_for_review(phone: str, pair: dict):
     send_interactive(
         phone=phone,
         body="Approve this pair?",
-        buttons=["Approve", "Suggest"],
+        buttons=["Approve", "Suggest", "Cancel"],
         header="Training Review",
     )
 
@@ -167,14 +167,29 @@ def _refine_with_llm(pair: dict, suggestion: str) -> dict:
         "Refine this WhatsApp chatbot Q&A pair based on the admin's suggestion.\n"
         f"Question: {pair['question']}\n"
         f"Current answer: {pair['answer']}\n"
+        f"Current message_type: {pair.get('message_type', 'text')}\n"
         f"Admin suggestion: {suggestion}\n\n"
-        "Reply with ONLY the improved answer text, nothing else."
+        "Reply with ONLY a JSON object with these keys: "
+        "answer (string), message_type (text|interactive|media|carousel), "
+        "buttons (list of up to 3 strings or null), image_url (string or null).\n"
+        "No markdown fences, no commentary."
     )
     response = ollama.chat(
         model='llama3.2',
         messages=[{"role": "user", "content": prompt}],
     )
-    return {**pair, "answer": response['message']['content'].strip()}
+    raw = response['message']['content'].strip()
+    try:
+        updated = json.loads(raw)
+        return {
+            **pair,
+            "answer":       updated.get("answer", pair["answer"]),
+            "message_type": updated.get("message_type", pair.get("message_type", "text")),
+            "buttons":      updated.get("buttons", pair.get("buttons")),
+            "image_url":    updated.get("image_url", pair.get("image_url")),
+        }
+    except (json.JSONDecodeError, AttributeError):
+        return {**pair, "answer": raw}
 
 
 # ─── Main dispatcher ──────────────────────────────────────────────────────────
@@ -250,8 +265,21 @@ def handle_admin(phone: str, message: str, collection) -> None:
             send_text(phone, "Type your suggestion for improving this pair:")
             return
 
+        if msg_lower == 'cancel':
+            _set_session(phone, _MENU)
+            send_text(phone, "Training cancelled.")
+            _send_admin_menu(phone)
+            return
+
     # ── Training suggest: waiting for free-text feedback ─────────────────────
     if state == _TRAINING_SUGGEST:
+        if msg_lower == 'cancel':
+            _set_session(phone, _TRAINING_REVIEW, current_pair=cur_pair)
+            send_text(phone, "Suggestion cancelled. Showing original pair.")
+            if cur_pair:
+                _send_pair_for_review(phone, cur_pair)
+            return
+
         if cur_pair:
             try:
                 refined = _refine_with_llm(cur_pair, msg)

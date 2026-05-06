@@ -181,6 +181,53 @@ def test_suggestion_llm_failure_falls_back_to_original(mock_config):
     assert admin_module._sessions[ADMIN_PHONE]["current_pair"] == SAMPLE_PAIR
     assert any("failed" in str(c).lower() for c in mock_text.call_args_list)
 
+def test_cancel_in_training_review_returns_to_menu(mock_config):
+    admin_module._sessions[ADMIN_PHONE] = _active_session("training_review", SAMPLE_PAIR)
+    with patch("app.admin.send_text") as mock_text, \
+         patch("app.admin.send_interactive"):
+        admin_module.handle_admin(ADMIN_PHONE, "Cancel", MagicMock())
+    assert admin_module._sessions[ADMIN_PHONE]["state"] == "menu"
+    assert any("cancel" in str(c).lower() for c in mock_text.call_args_list)
+
+def test_cancel_in_training_suggest_returns_to_review(mock_config):
+    admin_module._sessions[ADMIN_PHONE] = _active_session("training_suggest", SAMPLE_PAIR)
+    with patch("app.admin.send_text"), \
+         patch("app.admin.send_interactive"), \
+         patch("app.admin._refine_with_llm") as mock_refine:
+        admin_module.handle_admin(ADMIN_PHONE, "cancel", MagicMock())
+    assert admin_module._sessions[ADMIN_PHONE]["state"] == "training_review"
+    assert admin_module._sessions[ADMIN_PHONE]["current_pair"] == SAMPLE_PAIR
+    mock_refine.assert_not_called()
+
+
+# ─── _refine_with_llm unit tests ─────────────────────────────────────────────
+
+def test_refine_with_llm_parses_full_json_response():
+    """Suggestion that changes message_type should update the full pair."""
+    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
+    llm_json = json.dumps({
+        "answer": "Updated answer.",
+        "message_type": "media",
+        "buttons": None,
+        "image_url": "https://example.com/img.jpg",
+    })
+    mock_resp = {"message": {"content": llm_json}}
+    with patch("app.admin.ollama.chat", return_value=mock_resp):
+        result = admin_module._refine_with_llm(pair, "send media with product image")
+    assert result["answer"] == "Updated answer."
+    assert result["message_type"] == "media"
+    assert result["image_url"] == "https://example.com/img.jpg"
+
+
+def test_refine_with_llm_falls_back_to_text_on_bad_json():
+    """If LLM returns plain text instead of JSON, answer is updated, rest unchanged."""
+    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
+    mock_resp = {"message": {"content": "Plain improved answer text."}}
+    with patch("app.admin.ollama.chat", return_value=mock_resp):
+        result = admin_module._refine_with_llm(pair, "make it better")
+    assert result["answer"] == "Plain improved answer text."
+    assert result["message_type"] == "text"  # unchanged
+
 
 # ─── Auto-generate stub ───────────────────────────────────────────────────────
 

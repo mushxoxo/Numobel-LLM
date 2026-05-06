@@ -81,14 +81,29 @@ def refine_with_llm(pair: dict, suggestion: str) -> dict:
         "Refine this WhatsApp chatbot Q&A pair based on the suggestion.\n"
         f"Question: {pair['question']}\n"
         f"Current answer: {pair['answer']}\n"
+        f"Current message_type: {pair.get('message_type', 'text')}\n"
         f"Suggestion: {suggestion}\n\n"
-        "Reply with ONLY the improved answer text, nothing else."
+        "Reply with ONLY a JSON object with these keys: "
+        "answer (string), message_type (text|interactive|media|carousel), "
+        "buttons (list of up to 3 strings or null), image_url (string or null).\n"
+        "No markdown fences, no commentary."
     )
     response = ollama.chat(
         model='llama3.2',
         messages=[{'role': 'user', 'content': prompt}],
     )
-    return {**pair, 'answer': response['message']['content'].strip()}
+    raw = response['message']['content'].strip()
+    try:
+        updated = json.loads(raw)
+        return {
+            **pair,
+            'answer':       updated.get('answer', pair['answer']),
+            'message_type': updated.get('message_type', pair.get('message_type', 'text')),
+            'buttons':      updated.get('buttons', pair.get('buttons')),
+            'image_url':    updated.get('image_url', pair.get('image_url')),
+        }
+    except (json.JSONDecodeError, AttributeError):
+        return {**pair, 'answer': raw}
 
 
 def display_pair(pair: dict, idx: int, total: int) -> None:

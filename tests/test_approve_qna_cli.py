@@ -123,6 +123,31 @@ def test_quit_action_exits_loop_immediately(tmp_path, monkeypatch):
     mock_ingest.assert_not_called()
 
 
+# ── refine_with_llm unit tests ───────────────────────────────────────────────
+
+def test_refine_with_llm_parses_full_json_response():
+    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
+    llm_json = json.dumps({
+        "answer": "Updated answer.",
+        "message_type": "media",
+        "buttons": None,
+        "image_url": "https://example.com/img.jpg",
+    })
+    with patch.object(cli.ollama, 'chat', return_value={"message": {"content": llm_json}}):
+        result = cli.refine_with_llm(pair, "send media message with image")
+    assert result["answer"] == "Updated answer."
+    assert result["message_type"] == "media"
+    assert result["image_url"] == "https://example.com/img.jpg"
+
+
+def test_refine_with_llm_falls_back_to_text_on_bad_json():
+    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
+    with patch.object(cli.ollama, 'chat', return_value={"message": {"content": "Improved plain text."}}):
+        result = cli.refine_with_llm(pair, "make it better")
+    assert result["answer"] == "Improved plain text."
+    assert result["message_type"] == "text"  # unchanged
+
+
 # ── test 6: [S] suggest refines pair and writes back to pending ─────────────
 
 def test_suggest_refines_and_writes_back_then_approve(tmp_path, monkeypatch):
