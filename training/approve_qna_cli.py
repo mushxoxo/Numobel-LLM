@@ -1,10 +1,9 @@
 # Step 9 — CLI approval loop for Q&A pairs
 # [A]pprove → save to JSONL + ingest into ChromaDB via ingest_qna_pair()
-# [S]uggest → LLM refines pair (llama3.2) → writes back immediately → show updated → repeat
+# [S]uggest → LLM refines pair → writes back immediately → show updated → repeat
 # [K]skip  [Q]uit
 #
-# Refinement always uses llama3.2 (Ollama) for fast interactive response.
-# The Claude API model choice from generate_qna.py does not carry over here.
+# Refinement model chosen at startup: [1] qwen2.5:14b (Ollama)  [2] claude-sonnet-4-6 via API
 
 import json
 import logging
@@ -121,8 +120,26 @@ def _normalize_refined(updated: dict, original: dict) -> dict:
     }
 
 
-def refine_with_llm(pair: dict, suggestion: str) -> dict:
-    import os
+def choose_refinement_model() -> tuple[str, str | None]:
+    print("\nWhich model to use for refinement?")
+    print("  [1] qwen2.5:14b       (Ollama — local, free)")
+    print("  [2] claude-sonnet-4-6 (Claude API — best quality, uses API key)")
+    choice = input("Choice [1/2]: ").strip()
+
+    if choice == '2':
+        import os
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            api_key = input("Enter ANTHROPIC_API_KEY: ").strip()
+        if not api_key:
+            print("No API key provided. Falling back to qwen2.5:14b.")
+            return 'qwen2.5:14b', None
+        return 'claude-sonnet-4-6', api_key
+
+    return 'qwen2.5:14b', None
+
+
+def refine_with_llm(pair: dict, suggestion: str, model: str, api_key: str | None) -> dict:
     prompt = _REFINE_PROMPT_TEMPLATE.format(
         question=pair['question'],
         answer=pair['answer'],
@@ -132,8 +149,7 @@ def refine_with_llm(pair: dict, suggestion: str) -> dict:
         suggestion=suggestion,
     )
 
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-    if api_key:
+    if model == 'claude-sonnet-4-6' and api_key:
         import anthropic
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
@@ -144,7 +160,7 @@ def refine_with_llm(pair: dict, suggestion: str) -> dict:
         raw = message.content[0].text.strip()
     else:
         response = ollama.chat(
-            model='llama3.2',
+            model='qwen2.5:14b',
             messages=[{'role': 'user', 'content': prompt}],
             format='json',
         )
@@ -170,7 +186,7 @@ def display_pair(pair: dict, idx: int, total: int) -> None:
         print(f"Image   : {pair.get('image_url') or '(none)'}")
 
 
-def run_approval_loop(pairs: list[dict], collection) -> tuple[int, int]:
+def run_approval_loop(pairs: list[dict], collection, model: str, api_key: str | None) -> tuple[int, int]:
     total = len(pairs)
     approved_count = 0
     skipped_count  = 0
@@ -198,7 +214,7 @@ def run_approval_loop(pairs: list[dict], collection) -> tuple[int, int]:
                     print("No suggestion entered.")
                     continue
                 try:
-                    pair = refine_with_llm(pair, suggestion)
+                    pair = refine_with_llm(pair, suggestion, model, api_key)
                     mark_refined_in_pending(pair)
                     pairs[i] = pair
                     display_pair(pair, i + 1, total)
@@ -234,9 +250,11 @@ def main() -> None:
         return
 
     print(f"Found {len(pairs)} unapproved pairs.")
-    print("Refinement uses llama3.2 (Ollama) — make sure `ollama serve` is running.\n")
+    model, api_key = choose_refinement_model()
+    if model == 'qwen2.5:14b':
+        print("Make sure `ollama serve` is running.\n")
 
-    approved, skipped = run_approval_loop(pairs, collection)
+    approved, skipped = run_approval_loop(pairs, collection, model, api_key)
 
     remaining = load_unapproved()
     print(f"\nSession complete: {approved} approved, {skipped} skipped, {len(remaining)} remaining.")

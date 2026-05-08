@@ -1,5 +1,5 @@
 # Step 8 — Auto-generates Q&A pairs from data/clean_products.json
-# LLM choice at startup: [1] llama3.2 via Ollama  [2] claude-sonnet-4-6 via API
+# LLM choice at startup: [1] qwen2.5:14b via Ollama  [2] claude-sonnet-4-6 via API
 # Output: training/qna_pairs/pending.jsonl
 
 import json
@@ -175,9 +175,9 @@ def parse_pairs(raw: str, product: dict) -> list[dict]:
 
 
 def call_llm(prompt: str, model: str, api_key: str | None) -> str:
-    if model == 'llama3.2':
+    if model == 'qwen2.5:14b':
         response = ollama.chat(
-            model='llama3.2',
+            model='qwen2.5:14b',
             messages=[
                 {'role': 'system', 'content': _SYSTEM_PROMPT},
                 {'role': 'user',   'content': prompt},
@@ -205,8 +205,8 @@ def append_to_pending(pairs: list[dict]) -> None:
 
 def choose_model() -> tuple[str, str | None]:
     print("\nWhich model to use for generation?")
-    print("  [1] llama3.2       (Ollama — local, free, slower)")
-    print("  [2] claude-sonnet-4-6 (Claude API — better quality, uses API key)")
+    print("  [1] qwen2.5:14b       (Ollama — local, free)")
+    print("  [2] claude-sonnet-4-6 (Claude API — best quality, uses API key)")
     choice = input("Choice [1/2]: ").strip()
 
     if choice == '2':
@@ -214,11 +214,11 @@ def choose_model() -> tuple[str, str | None]:
         if not api_key:
             api_key = input("Enter ANTHROPIC_API_KEY: ").strip()
         if not api_key:
-            print("No API key provided. Falling back to llama3.2.")
-            return 'llama3.2', None
+            print("No API key provided. Falling back to qwen2.5:14b.")
+            return 'qwen2.5:14b', None
         return 'claude-sonnet-4-6', api_key
 
-    return 'llama3.2', None
+    return 'qwen2.5:14b', None
 
 
 def main() -> None:
@@ -257,7 +257,7 @@ def main() -> None:
             log.exception("Generation failed for %s", product['name'])
             failed += 1
 
-        if model != 'llama3.2':
+        if api_key:
             time.sleep(1.2)
 
     total_ok = len(remaining) - failed
