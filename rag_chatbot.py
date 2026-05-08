@@ -352,7 +352,18 @@ def generate_answer(query: str, context_chunks: list[dict],
     for i, chunk in enumerate(context_chunks, 1):
         meta = chunk['metadata']
         header = f"[Source {i}: {meta.get('product_name', '?')} | {meta.get('brand', '?')}]"
-        context_parts.append(f"{header}\n{chunk['text']}")
+        body = chunk['text']
+        if meta.get('source') == 'approved_training':
+            mt = meta.get('message_type', 'text')
+            try:
+                btns = json.loads(meta.get('buttons', '[]'))
+            except (json.JSONDecodeError, ValueError):
+                btns = []
+            hint = f'message_type="{mt}"'
+            if btns:
+                hint += f', buttons={json.dumps(btns)}'
+            body += f'\n[Approved format: {hint}]'
+        context_parts.append(f"{header}\n{body}")
 
     context_block = '\n\n---\n\n'.join(context_parts)
     current_prompt = f"CONTEXT:\n{context_block}\n\nUSER QUERY:\n{query}"
