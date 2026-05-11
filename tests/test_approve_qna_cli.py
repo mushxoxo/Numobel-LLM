@@ -55,6 +55,10 @@ def test_load_unapproved_skips_malformed(tmp_path, monkeypatch):
 
 # ── test 3: [A] approve triggers all three writes + ingest ──────────────────
 
+_MODEL = 'qwen2.5:14b'
+_PHONE = 'cli-testuser'
+
+
 def test_approve_action_calls_all_three_operations(tmp_path, monkeypatch):
     pending = tmp_path / 'pending.jsonl'
     approved_file = tmp_path / 'approved.jsonl'
@@ -69,16 +73,14 @@ def test_approve_action_calls_all_three_operations(tmp_path, monkeypatch):
     monkeypatch.setattr('builtins.input', lambda *_: next(inputs))
 
     with patch.object(cli.rag, 'ingest_qna_pair') as mock_ingest:
-        approved_c, skipped_c = cli.run_approval_loop([pair], mock_collection)
+        approved_c, skipped_c = cli.run_approval_loop([pair], mock_collection, _MODEL, None, _PHONE)
 
     assert approved_c == 1
     assert skipped_c == 0
     mock_ingest.assert_called_once()
-    # approved.jsonl should have the pair with approved=True
     saved = cli.load_jsonl(approved_file)
     assert len(saved) == 1
     assert saved[0]['approved'] is True
-    # pending.jsonl should have approved=True
     pending_data = cli.load_jsonl(pending)
     assert pending_data[0]['approved'] is True
 
@@ -96,7 +98,7 @@ def test_skip_action_increments_skipped_only(tmp_path, monkeypatch):
     monkeypatch.setattr('builtins.input', lambda *_: next(inputs))
 
     with patch.object(cli.rag, 'ingest_qna_pair') as mock_ingest:
-        approved_c, skipped_c = cli.run_approval_loop([pair], mock_collection)
+        approved_c, skipped_c = cli.run_approval_loop([pair], mock_collection, _MODEL, None, _PHONE)
 
     assert approved_c == 0
     assert skipped_c == 1
@@ -116,39 +118,39 @@ def test_quit_action_exits_loop_immediately(tmp_path, monkeypatch):
     monkeypatch.setattr('builtins.input', lambda *_: next(inputs))
 
     with patch.object(cli.rag, 'ingest_qna_pair') as mock_ingest:
-        approved_c, skipped_c = cli.run_approval_loop(pairs, mock_collection)
+        approved_c, skipped_c = cli.run_approval_loop(pairs, mock_collection, _MODEL, None, _PHONE)
 
     assert approved_c == 0
     assert skipped_c == 0
     mock_ingest.assert_not_called()
 
 
-# ── refine_with_llm unit tests ───────────────────────────────────────────────
+# ── refine REPL unit tests ───────────────────────────────────────────────────
 
-def test_refine_with_llm_parses_full_json_response():
-    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    llm_json = json.dumps({
-        "answer": "Updated answer.",
-        "message_type": "media",
-        "buttons": None,
-        "image_url": "https://example.com/img.jpg",
-    })
-    with patch.object(cli.ollama, 'chat', return_value={"message": {"content": llm_json}}):
-        result = cli.refine_with_llm(pair, "send media message with image")
-    assert result["answer"] == "Updated answer."
-    assert result["message_type"] == "media"
-    assert result["image_url"] == "https://example.com/img.jpg"
+def test_refine_repl_approve_returns_updated_pair(monkeypatch):
+    """Typing 'approve' after a chat_turn exits and returns the current_pair."""
+    pair = _make_pair()
+    updated = {**pair, 'answer': 'Updated.'}
+    inputs = iter(['make it shorter', 'approve'])
+    monkeypatch.setattr('builtins.input', lambda *_: next(inputs))
 
+    with patch('approve_qna_cli.chat_turn', return_value=('Looks good!', updated)) as mock_ct, \
+         patch('app.refinement.engine.save_refine_state'), \
+         patch('app.refinement.engine.load_admin_prefs', return_value=[]):
+        result = cli._run_refine_repl(pair, _MODEL, None, _PHONE)
 
-def test_refine_with_llm_falls_back_to_text_on_bad_json():
-    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    with patch.object(cli.ollama, 'chat', return_value={"message": {"content": "Improved plain text."}}):
-        result = cli.refine_with_llm(pair, "make it better")
-    assert result["answer"] == "Improved plain text."
-    assert result["message_type"] == "text"  # unchanged
+    assert result['answer'] == 'Updated.'
 
 
-# ── test 6: [S] suggest refines pair and writes back to pending ─────────────
+def test_refine_repl_cancel_returns_original(monkeypatch):
+    pair = _make_pair()
+    inputs = iter(['cancel'])
+    monkeypatch.setattr('builtins.input', lambda *_: next(inputs))
+    result = cli._run_refine_repl(pair, _MODEL, None, _PHONE)
+    assert result == pair
+
+
+# ── test 6: [S] suggest uses REPL and writes refined pair back ───────────────
 
 def test_suggest_refines_and_writes_back_then_approve(tmp_path, monkeypatch):
     pending = tmp_path / 'pending.jsonl'
@@ -163,26 +165,25 @@ def test_suggest_refines_and_writes_back_then_approve(tmp_path, monkeypatch):
     def fake_input(prompt=""):
         nonlocal call_count
         call_count += 1
+        # outer loop: 's', then 'a'
         if call_count == 1:
             return 's'
-        elif call_count == 2:
-            return 'make it shorter'
         else:
             return 'a'
     monkeypatch.setattr('builtins.input', fake_input)
 
     refined_pair = {**pair, 'answer': 'Refined answer.'}
-    with patch.object(cli, 'refine_with_llm', return_value=refined_pair) as mock_refine, \
-         patch.object(cli.rag, 'ingest_qna_pair'):
-        cli.run_approval_loop([pair], mock_collection)
+    with patch.object(cli, '_run_refine_repl', return_value=refined_pair) as mock_repl, \
+         patch.object(cli.rag, 'ingest_qna_pair'), \
+         patch('approve_qna_cli.extract_patterns', return_value=[]):
+        cli.run_approval_loop([pair], mock_collection, _MODEL, None, _PHONE)
 
-    mock_refine.assert_called_once()
-    # refined answer should be written to pending
+    mock_repl.assert_called_once()
     pending_data = cli.load_jsonl(pending)
     assert pending_data[0]['answer'] == 'Refined answer.'
 
 
-# ── test 7: [S] suggest with LLM failure falls back gracefully ──────────────
+# ── test 7: [S] suggest with REPL cancel falls back to original ──────────────
 
 def test_suggest_llm_failure_falls_back(tmp_path, monkeypatch):
     pending = tmp_path / 'pending.jsonl'
@@ -195,17 +196,14 @@ def test_suggest_llm_failure_falls_back(tmp_path, monkeypatch):
     def fake_input(prompt=""):
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            return 's'
-        elif call_count == 2:
-            return 'a suggestion'
-        else:
-            return 'k'
+        return 's' if call_count == 1 else 'k'
     monkeypatch.setattr('builtins.input', fake_input)
 
-    with patch.object(cli, 'refine_with_llm', side_effect=RuntimeError("Ollama down")), \
-         patch.object(cli.rag, 'ingest_qna_pair') as mock_ingest:
-        approved_c, skipped_c = cli.run_approval_loop([pair], mock_collection)
+    # REPL returns original (simulating cancel)
+    with patch.object(cli, '_run_refine_repl', return_value=pair), \
+         patch.object(cli.rag, 'ingest_qna_pair') as mock_ingest, \
+         patch('approve_qna_cli.extract_patterns', return_value=[]):
+        approved_c, skipped_c = cli.run_approval_loop([pair], mock_collection, _MODEL, None, _PHONE)
 
     mock_ingest.assert_not_called()
     assert skipped_c == 1

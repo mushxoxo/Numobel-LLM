@@ -402,6 +402,28 @@ def generate_answer(query: str, context_chunks: list[dict],
         buttons   = fallback['buttons']
         image_url = None
 
+    # Faithful-replay fix: when the top hit is an approved training pair and the LLM
+    # agrees on the message_type, copy structural fields verbatim from metadata so that
+    # buttons / image_url cannot be dropped by the LLM.
+    top_hit = context_chunks[0] if context_chunks else None
+    if top_hit and top_hit.get('metadata', {}).get('source') == 'approved_training':
+        meta = top_hit['metadata']
+        approved_mt = meta.get('message_type')
+        if approved_mt and message_type == approved_mt:
+            if approved_mt == 'interactive':
+                try:
+                    stored_buttons = json.loads(meta.get('buttons', '[]'))
+                except (json.JSONDecodeError, ValueError):
+                    stored_buttons = []
+                if stored_buttons:
+                    buttons = stored_buttons
+                    log.debug("REPLAY_FIX | Copied buttons from approved metadata")
+            elif approved_mt == 'media':
+                stored_img = meta.get('image_url') or ''
+                if stored_img:
+                    image_url = stored_img
+                    log.debug("REPLAY_FIX | Copied image_url from approved metadata")
+
     return {
         'message_type':      message_type,
         'content':           content,
@@ -432,6 +454,7 @@ def ingest_qna_pair(pair: dict, collection) -> str:
             'source':       'approved_training',
             'message_type': pair.get('message_type', 'text'),
             'buttons':      json.dumps(pair.get('buttons') or []),
+            'image_url':    pair.get('image_url') or '',
             'product':      pair.get('product', ''),
         }],
     )

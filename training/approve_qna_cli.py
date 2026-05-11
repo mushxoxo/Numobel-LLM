@@ -1,12 +1,13 @@
-# Step 9 — CLI approval loop for Q&A pairs
+# CLI approval loop for Q&A pairs
 # [A]pprove → save to JSONL + ingest into ChromaDB via ingest_qna_pair()
-# [S]uggest → LLM refines pair → writes back immediately → show updated → repeat
+# [S]uggest → multi-turn refinement REPL → type 'approve' or 'cancel' to exit
 # [K]skip  [Q]uit
 #
 # Refinement model chosen at startup: [1] qwen2.5:14b (Ollama)  [2] claude-sonnet-4-6 via API
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -16,8 +17,10 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import ollama
 import rag_chatbot as rag
+from app.refinement.engine import chat_turn, extract_patterns
+from app.refinement.constraints import validate_pair
+from app.refinement.storage import append_admin_prefs
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +60,7 @@ def mark_approved_in_pending(pair: dict) -> None:
     for p in all_pairs:
         if p.get('question') == pair.get('question'):
             p['approved'] = True
+            p.pop('in_review', None)
     _rewrite_pending(all_pairs)
 
 
@@ -75,51 +79,6 @@ def append_approved(pair: dict) -> None:
         f.write(json.dumps(pair, ensure_ascii=False) + '\n')
 
 
-_REFINE_PROMPT_TEMPLATE = (
-    "Refine this WhatsApp chatbot Q&A pair based on the suggestion.\n\n"
-    "Current pair:\n"
-    "  question: {question}\n"
-    "  answer: {answer}\n"
-    "  message_type: {message_type}\n"
-    "  buttons: {buttons}\n"
-    "  image_url: {image_url}\n\n"
-    "Suggestion: {suggestion}\n\n"
-    "WhatsApp message type rules:\n"
-    "  - 'interactive': has buttons (2-3 short labels), no image\n"
-    "  - 'media': has image_url, no buttons\n"
-    "  - 'text': plain text only, no buttons, no image\n"
-    "  - 'carousel': multiple product cards, no buttons, no image\n\n"
-    "IMPORTANT: Only change fields the suggestion explicitly asks to change. "
-    "Keep unchanged fields exactly as they are.\n\n"
-    "Reply with a JSON object: "
-    "{{\"answer\": \"...\", \"message_type\": \"text|interactive|media|carousel\", "
-    "\"buttons\": [...or null], \"image_url\": \"...or null\"}}"
-)
-
-
-def _normalize_refined(updated: dict, original: dict) -> dict:
-    mt        = updated.get('message_type', original.get('message_type', 'text'))
-    buttons   = updated.get('buttons',   original.get('buttons'))
-    image_url = updated.get('image_url', original.get('image_url'))
-
-    if mt == 'text' and buttons:
-        mt = 'interactive'
-    if mt == 'text' and image_url:
-        mt = 'media'
-    if mt == 'interactive':
-        image_url = None
-    if mt in ('media', 'text', 'carousel'):
-        buttons = None
-
-    return {
-        **original,
-        'answer':       updated.get('answer', original['answer']),
-        'message_type': mt,
-        'buttons':      buttons,
-        'image_url':    image_url,
-    }
-
-
 def choose_refinement_model() -> tuple[str, str | None]:
     print("\nWhich model to use for refinement?")
     print("  [1] qwen2.5:14b       (Ollama — local, free)")
@@ -127,7 +86,6 @@ def choose_refinement_model() -> tuple[str, str | None]:
     choice = input("Choice [1/2]: ").strip()
 
     if choice == '2':
-        import os
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
             api_key = input("Enter ANTHROPIC_API_KEY: ").strip()
@@ -139,38 +97,17 @@ def choose_refinement_model() -> tuple[str, str | None]:
     return 'qwen2.5:14b', None
 
 
-def refine_with_llm(pair: dict, suggestion: str, model: str, api_key: str | None) -> dict:
-    prompt = _REFINE_PROMPT_TEMPLATE.format(
-        question=pair['question'],
-        answer=pair['answer'],
-        message_type=pair.get('message_type', 'text'),
-        buttons=pair.get('buttons'),
-        image_url=pair.get('image_url'),
-        suggestion=suggestion,
-    )
-
-    if model == 'claude-sonnet-4-6' and api_key:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
-            model='claude-sonnet-4-6',
-            max_tokens=512,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        raw = message.content[0].text.strip()
-    else:
-        response = ollama.chat(
-            model='qwen2.5:14b',
-            messages=[{'role': 'user', 'content': prompt}],
-            format='json',
-        )
-        raw = response['message']['content'].strip()
-
-    try:
-        updated = json.loads(raw)
-        return _normalize_refined(updated, pair)
-    except (json.JSONDecodeError, AttributeError):
-        return {**pair, 'answer': raw}
+def choose_admin_phone() -> str:
+    print("\nEnter admin phone for prefs/state storage (matches WhatsApp admin phones in config.json):")
+    phone = input("> ").strip()
+    if not phone:
+        try:
+            username = os.getlogin()
+        except Exception:
+            username = 'unknown'
+        phone = f"cli-{username}"
+        print(f"Using fallback phone ID: {phone}")
+    return phone
 
 
 def display_pair(pair: dict, idx: int, total: int) -> None:
@@ -186,7 +123,60 @@ def display_pair(pair: dict, idx: int, total: int) -> None:
         print(f"Image   : {pair.get('image_url') or '(none)'}")
 
 
-def run_approval_loop(pairs: list[dict], collection, model: str, api_key: str | None) -> tuple[int, int]:
+def _run_refine_repl(
+    pair: dict,
+    model: str,
+    api_key: str | None,
+    phone: str,
+) -> dict:
+    """
+    Interactive multi-turn refinement loop for CLI.
+    Type 'approve' or 'cancel' to exit.
+    Returns the final pair (possibly unchanged if cancelled).
+    """
+    state: dict = {
+        'original_pair':  dict(pair),
+        'current_pair':   dict(pair),
+        'chat_history':   [],
+        'style_examples': [],
+    }
+    print("\nRefinement chat started. Type your suggestions, 'approve' to finish, or 'cancel' to abort.")
+
+    while True:
+        raw = input("> ").strip()
+        if not raw:
+            continue
+
+        if raw.lower() == 'approve':
+            violations = validate_pair(state['current_pair'])
+            if violations:
+                print("Cannot approve — fix these issues first:")
+                for v in violations:
+                    print(f"  • {v}")
+                continue
+            return state['current_pair']
+
+        if raw.lower() == 'cancel':
+            print("Refinement cancelled. Keeping original.")
+            return pair
+
+        reply, updated = chat_turn(state, raw, model, api_key, phone)
+        if updated:
+            state['current_pair'] = updated
+        print(f"\nAssistant: {reply}\n")
+        if updated:
+            display_pair(state['current_pair'], 0, 0)
+
+    return state['current_pair']
+
+
+def run_approval_loop(
+    pairs: list[dict],
+    collection,
+    model: str,
+    api_key: str | None,
+    phone: str,
+) -> tuple[int, int]:
     total = len(pairs)
     approved_count = 0
     skipped_count  = 0
@@ -200,6 +190,12 @@ def run_approval_loop(pairs: list[dict], collection, model: str, api_key: str | 
             raw = input("\n[A]pprove  [S]uggest  [K]skip  [Q]uit  > ").strip().lower()
 
             if raw == 'a':
+                violations = validate_pair(pair)
+                if violations:
+                    print("Cannot approve — fix these issues first:")
+                    for v in violations:
+                        print(f"  • {v}")
+                    continue
                 mark_approved_in_pending(pair)
                 approved_pair = {**pair, 'approved': True}
                 append_approved(approved_pair)
@@ -209,17 +205,33 @@ def run_approval_loop(pairs: list[dict], collection, model: str, api_key: str | 
                 break
 
             elif raw == 's':
-                suggestion = input("Suggestion: ").strip()
-                if not suggestion:
-                    print("No suggestion entered.")
-                    continue
-                try:
-                    pair = refine_with_llm(pair, suggestion, model, api_key)
-                    mark_refined_in_pending(pair)
-                    pairs[i] = pair
-                    display_pair(pair, i + 1, total)
-                except Exception as e:
-                    print(f"Refinement failed: {e}. Showing original.")
+                pair = _run_refine_repl(pair, model, api_key, phone)
+                mark_refined_in_pending(pair)
+                pairs[i] = pair
+                display_pair(pair, i + 1, total)
+                # Offer pattern extraction after refinement
+                state: dict = {
+                    'original_pair': pair,
+                    'current_pair':  pair,
+                    'chat_history':  [],
+                }
+                patterns = extract_patterns(state.get('chat_history', []), model, api_key)
+                if patterns:
+                    print("\nDetected style patterns:")
+                    for idx, p in enumerate(patterns, 1):
+                        print(f"  {idx}. {p['text']}")
+                    save_choice = input("Save patterns? [y/n/numbers like 1,3]: ").strip().lower()
+                    if save_choice == 'y':
+                        append_admin_prefs(phone, patterns)
+                        print(f"Saved {len(patterns)} pattern(s).")
+                    elif save_choice not in ('n', ''):
+                        import re
+                        nums = [int(x) for x in re.findall(r'\d+', save_choice)
+                                if 1 <= int(x) <= len(patterns)]
+                        if nums:
+                            chosen = [patterns[n - 1] for n in nums]
+                            append_admin_prefs(phone, chosen)
+                            print(f"Saved {len(chosen)} pattern(s).")
 
             elif raw == 'k':
                 skipped_count += 1
@@ -251,10 +263,11 @@ def main() -> None:
 
     print(f"Found {len(pairs)} unapproved pairs.")
     model, api_key = choose_refinement_model()
+    phone = choose_admin_phone()
     if model == 'qwen2.5:14b':
         print("Make sure `ollama serve` is running.\n")
 
-    approved, skipped = run_approval_loop(pairs, collection, model, api_key)
+    approved, skipped = run_approval_loop(pairs, collection, model, api_key, phone)
 
     remaining = load_unapproved()
     print(f"\nSession complete: {approved} approved, {skipped} skipped, {len(remaining)} remaining.")

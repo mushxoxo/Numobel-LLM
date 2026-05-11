@@ -8,3 +8,5 @@ sessions/
 CLAUDE.md
 .ipynb_checkpoints/
 data/
+training/admin_refine_state/
+training/admin_preferences/

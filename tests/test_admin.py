@@ -151,35 +151,40 @@ def test_approve_all_done_returns_to_menu(mock_config):
     assert admin_module._sessions[ADMIN_PHONE]["state"] == "menu"
 
 
-# ─── Suggest ─────────────────────────────────────────────────────────────────
+# ─── Refine (training_chat) ───────────────────────────────────────────────────
 
-def test_suggest_transitions_to_suggest_state(mock_config):
+def test_refine_transitions_to_training_chat(mock_config):
+    """[Refine] button locks the pair and enters training_chat with an opener."""
     admin_module._sessions[ADMIN_PHONE] = _active_session("training_review", SAMPLE_PAIR)
     with patch("app.admin.send_text"), \
-         patch("app.admin.send_interactive"):
-        admin_module.handle_admin(ADMIN_PHONE, "Suggest", MagicMock())
-    assert admin_module._sessions[ADMIN_PHONE]["state"] == "training_suggest"
-    assert admin_module._sessions[ADMIN_PHONE]["current_pair"] == SAMPLE_PAIR
+         patch("app.admin.send_interactive"), \
+         patch("app.admin.lock_pair", return_value=True), \
+         patch("app.admin._load_style_examples", return_value=[]), \
+         patch("app.admin.save_refine_state"):
+        admin_module.handle_admin(ADMIN_PHONE, "Refine", MagicMock())
+    state = admin_module._sessions[ADMIN_PHONE]["state"]
+    assert state == "training_chat"
+    assert admin_module._sessions[ADMIN_PHONE]["original_pair"] == SAMPLE_PAIR
 
-def test_suggestion_text_refines_and_shows_pair(mock_config):
-    refined = {**SAMPLE_PAIR, "answer": "An improved answer."}
-    admin_module._sessions[ADMIN_PHONE] = _active_session("training_suggest", SAMPLE_PAIR)
-    with patch("app.admin._refine_with_llm", return_value=refined) as mock_refine, \
+
+def test_chat_turn_called_in_training_chat(mock_config):
+    """A free-text message in training_chat calls chat_turn and shows the reply."""
+    refined = {**SAMPLE_PAIR, "answer": "Better answer."}
+    admin_module._sessions[ADMIN_PHONE] = {
+        "state": "training_chat",
+        "current_pair": dict(SAMPLE_PAIR),
+        "original_pair": dict(SAMPLE_PAIR),
+        "chat_history": [],
+        "style_examples": [],
+        "last_active": datetime.utcnow(),
+    }
+    with patch("app.admin.chat_turn", return_value=("Looks good!", refined)) as mock_ct, \
          patch("app.admin.send_text"), \
          patch("app.admin.send_interactive"):
-        admin_module.handle_admin(ADMIN_PHONE, "add price info", MagicMock())
-    mock_refine.assert_called_once_with(SAMPLE_PAIR, "add price info")
-    assert admin_module._sessions[ADMIN_PHONE]["state"] == "training_review"
-    assert admin_module._sessions[ADMIN_PHONE]["current_pair"]["answer"] == "An improved answer."
+        admin_module.handle_admin(ADMIN_PHONE, "make it shorter", MagicMock())
+    mock_ct.assert_called_once()
+    assert admin_module._sessions[ADMIN_PHONE]["current_pair"] == refined
 
-def test_suggestion_llm_failure_falls_back_to_original(mock_config):
-    admin_module._sessions[ADMIN_PHONE] = _active_session("training_suggest", SAMPLE_PAIR)
-    with patch("app.admin._refine_with_llm", side_effect=Exception("ollama down")), \
-         patch("app.admin.send_text") as mock_text, \
-         patch("app.admin.send_interactive"):
-        admin_module.handle_admin(ADMIN_PHONE, "add price info", MagicMock())
-    assert admin_module._sessions[ADMIN_PHONE]["current_pair"] == SAMPLE_PAIR
-    assert any("failed" in str(c).lower() for c in mock_text.call_args_list)
 
 def test_cancel_in_training_review_returns_to_menu(mock_config):
     admin_module._sessions[ADMIN_PHONE] = _active_session("training_review", SAMPLE_PAIR)
@@ -189,65 +194,23 @@ def test_cancel_in_training_review_returns_to_menu(mock_config):
     assert admin_module._sessions[ADMIN_PHONE]["state"] == "menu"
     assert any("cancel" in str(c).lower() for c in mock_text.call_args_list)
 
-def test_cancel_in_training_suggest_returns_to_review(mock_config):
-    admin_module._sessions[ADMIN_PHONE] = _active_session("training_suggest", SAMPLE_PAIR)
+
+def test_cancel_in_training_chat_unlocks_and_returns_to_review(mock_config):
+    """[Cancel] in training_chat unlocks pair, clears state, goes back to review."""
+    admin_module._sessions[ADMIN_PHONE] = {
+        "state": "training_chat",
+        "current_pair": dict(SAMPLE_PAIR),
+        "original_pair": dict(SAMPLE_PAIR),
+        "chat_history": [],
+        "last_active": datetime.utcnow(),
+    }
     with patch("app.admin.send_text"), \
          patch("app.admin.send_interactive"), \
-         patch("app.admin._refine_with_llm") as mock_refine:
+         patch("app.admin.unlock_pair") as mock_unlock, \
+         patch("app.admin.clear_refine_state"):
         admin_module.handle_admin(ADMIN_PHONE, "cancel", MagicMock())
+    mock_unlock.assert_called_once()
     assert admin_module._sessions[ADMIN_PHONE]["state"] == "training_review"
-    assert admin_module._sessions[ADMIN_PHONE]["current_pair"] == SAMPLE_PAIR
-    mock_refine.assert_not_called()
-
-
-# ─── _refine_with_llm unit tests ─────────────────────────────────────────────
-
-def test_refine_with_llm_uses_claude_when_api_key_set():
-    """When ANTHROPIC_API_KEY is set, refinement uses Claude, not Ollama."""
-    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    llm_json = json.dumps({"answer": "Claude answer.", "message_type": "text", "buttons": None, "image_url": None})
-    mock_content = MagicMock(); mock_content.text = llm_json
-    mock_message = MagicMock(); mock_message.content = [mock_content]
-    mock_client = MagicMock(); mock_client.messages.create.return_value = mock_message
-
-    with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}), \
-         patch("app.admin.ollama.chat") as mock_ollama, \
-         patch("anthropic.Anthropic", return_value=mock_client):
-        result = admin_module._refine_with_llm(pair, "improve answer")
-
-    mock_ollama.assert_not_called()
-    assert result["answer"] == "Claude answer."
-
-
-def test_refine_with_llm_falls_back_to_ollama_without_api_key():
-    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    llm_json = json.dumps({"answer": "Ollama answer.", "message_type": "text", "buttons": None, "image_url": None})
-    with patch.dict("os.environ", {}, clear=True), \
-         patch("app.admin.ollama.chat", return_value={"message": {"content": llm_json}}) as mock_ollama:
-        result = admin_module._refine_with_llm(pair, "improve answer")
-    mock_ollama.assert_called_once()
-    assert result["answer"] == "Ollama answer."
-
-
-def test_normalize_refined_corrects_text_with_buttons():
-    """LLM returns text + buttons → should become interactive."""
-    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    llm_json = json.dumps({"answer": "A.", "message_type": "text", "buttons": ["Buy", "Learn More"], "image_url": None})
-    with patch.dict("os.environ", {}, clear=True), \
-         patch("app.admin.ollama.chat", return_value={"message": {"content": llm_json}}):
-        result = admin_module._refine_with_llm(pair, "add buttons")
-    assert result["message_type"] == "interactive"
-    assert result["buttons"] == ["Buy", "Learn More"]
-
-
-def test_refine_with_llm_falls_back_to_text_on_bad_json():
-    """If LLM returns plain text instead of JSON, answer is updated, rest unchanged."""
-    pair = {"question": "Q?", "answer": "A.", "message_type": "text", "buttons": None, "image_url": None}
-    with patch.dict("os.environ", {}, clear=True), \
-         patch("app.admin.ollama.chat", return_value={"message": {"content": "Plain improved answer text."}}):
-        result = admin_module._refine_with_llm(pair, "make it better")
-    assert result["answer"] == "Plain improved answer text."
-    assert result["message_type"] == "text"  # unchanged
 
 
 # ─── Auto-generate stub ───────────────────────────────────────────────────────
