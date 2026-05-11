@@ -1,13 +1,9 @@
-import logging
-import os
 import requests
-from dotenv import load_dotenv
 
-load_dotenv()
+from app.log import get_logger
+from app.messaging.client import wa2mation_post
 
-log = logging.getLogger('rag_chatbot')
-
-_TIMEOUT = 10
+log = get_logger()
 
 
 def send_interactive(
@@ -20,10 +16,11 @@ def send_interactive(
     """Send a button interactive message. buttons is a list of up to 3 label strings."""
     if len(buttons) > 3:
         log.warning("send_interactive | %d buttons provided, truncating to 3", len(buttons))
-    api_key    = os.getenv("WA2MATION_API_KEY")
-    vendor_uid = os.getenv("WA2MATION_VENDOR_UID")
-    url     = f"https://wa2mation.com/api/{vendor_uid}/contact/send-interactive-message"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    truncated = [label for label in buttons if len(label) > 20]
+    if truncated:
+        log.warning("send_interactive | button label(s) truncated to 20 chars: %s", truncated)
+    buttons = [label[:20] for label in buttons]
+
     payload = {
         "phone_number":     phone,
         "interactive_type": "button",
@@ -35,7 +32,8 @@ def send_interactive(
         payload["header_text"] = header
     if footer:
         payload["footer_text"] = footer
-    resp = requests.post(url, json=payload, headers=headers, timeout=_TIMEOUT)
+
+    resp = wa2mation_post("send-interactive-message", payload)
     if resp.status_code != 200:
         log.warning("send_interactive failed | status=%d body=%s", resp.status_code, resp.text[:200])
     return resp

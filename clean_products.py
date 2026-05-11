@@ -9,6 +9,7 @@ and rag_clean.py (intermediate dict → RAG-optimised schema).
 
 import csv
 import json
+import logging
 import re
 import os
 from html import unescape
@@ -17,6 +18,8 @@ from html import unescape
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 INPUT_FILE  = os.path.join(BASE_DIR, 'data', 'Products.csv')
 OUTPUT_FILE = os.path.join(BASE_DIR, 'data', 'clean_products.json')
+
+log = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────
@@ -475,9 +478,10 @@ def _transform(product):
 # ──────────────────────────────────────────────
 
 def main():
-    print(f"Reading {INPUT_FILE} ...")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    log.info("Reading %s", INPUT_FILE)
     intermediates = parse_csv(INPUT_FILE)
-    print(f"Parsed {len(intermediates)} products from CSV.")
+    log.info("Parsed %d products from CSV", len(intermediates))
 
     cleaned = [_transform(p) for p in intermediates]
 
@@ -485,12 +489,11 @@ def main():
         json.dump(cleaned, f, indent=2, ensure_ascii=False)
 
     keys_set = set(tuple(sorted(p.keys())) for p in cleaned)
-    print(f"Processed {len(cleaned)} products → {OUTPUT_FILE}")
-    print(f"Schema variants: {len(keys_set)} (should be 1)")
-
     in_size  = os.path.getsize(INPUT_FILE)
     out_size = os.path.getsize(OUTPUT_FILE)
-    print(f"Size: {in_size:,} bytes (CSV) → {out_size:,} bytes (JSON)")
+    log.info("Processed %d products → %s", len(cleaned), OUTPUT_FILE)
+    log.info("Schema variants: %d (should be 1)", len(keys_set))
+    log.info("Size: %d bytes (CSV) → %d bytes (JSON)", in_size, out_size)
 
 
 if __name__ == '__main__':

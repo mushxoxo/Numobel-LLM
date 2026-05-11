@@ -14,27 +14,27 @@ def _mock_ollama_response(content: str):
 # ─── _keyword_fallback ────────────────────────────────────────────────────────
 
 def test_fallback_greeting():
-    from rag_chatbot import _keyword_fallback
+    from app.rag import _keyword_fallback
     assert _keyword_fallback("hi there")['message_type'] == 'interactive'
 
 def test_fallback_hello():
-    from rag_chatbot import _keyword_fallback
+    from app.rag import _keyword_fallback
     assert _keyword_fallback("hello")['message_type'] == 'interactive'
 
 def test_fallback_show_me():
-    from rag_chatbot import _keyword_fallback
+    from app.rag import _keyword_fallback
     assert _keyword_fallback("show me what you have")['message_type'] == 'interactive'
 
 def test_fallback_carousel_stacker():
-    from rag_chatbot import _keyword_fallback
+    from app.rag import _keyword_fallback
     assert _keyword_fallback("tell me about stackers")['message_type'] == 'carousel'
 
 def test_fallback_media():
-    from rag_chatbot import _keyword_fallback
+    from app.rag import _keyword_fallback
     assert _keyword_fallback("can I see a photo")['message_type'] == 'media'
 
 def test_fallback_text_default():
-    from rag_chatbot import _keyword_fallback
+    from app.rag import _keyword_fallback
     assert _keyword_fallback("what is the price of the wood finish")['message_type'] == 'text'
 
 
@@ -52,8 +52,8 @@ def test_generate_answer_parses_valid_json(dummy_chunks):
         'buttons': ['Stackers', 'On Wheels'],
         'image_url': None,
     })
-    with patch('rag_chatbot.ollama.chat', return_value=_mock_ollama_response(payload)):
-        from rag_chatbot import generate_answer
+    with patch('app.rag.ollama.chat', return_value=_mock_ollama_response(payload)):
+        from app.rag import generate_answer
         result = generate_answer("what toys do you have", dummy_chunks)
     assert result['message_type'] == 'interactive'
     assert result['content'] == 'We have stackers!'
@@ -65,16 +65,16 @@ def test_generate_answer_strips_markdown_fences(dummy_chunks):
     payload = '```json\n' + json.dumps({
         'message_type': 'text', 'content': 'Sure!', 'buttons': None, 'image_url': None
     }) + '\n```'
-    with patch('rag_chatbot.ollama.chat', return_value=_mock_ollama_response(payload)):
-        from rag_chatbot import generate_answer
+    with patch('app.rag.ollama.chat', return_value=_mock_ollama_response(payload)):
+        from app.rag import generate_answer
         result = generate_answer("tell me about rubio", dummy_chunks)
     assert result['message_type'] == 'text'
     assert result['content'] == 'Sure!'
 
 
 def test_generate_answer_fallback_on_invalid_json(dummy_chunks):
-    with patch('rag_chatbot.ollama.chat', return_value=_mock_ollama_response("This is plain text")):
-        from rag_chatbot import generate_answer
+    with patch('app.rag.ollama.chat', return_value=_mock_ollama_response("This is plain text")):
+        from app.rag import generate_answer
         result = generate_answer("hi", dummy_chunks)
     assert result['message_type'] == 'interactive'
     # Raw LLM garbage is no longer sent to users — static fallback message returned instead
@@ -83,16 +83,16 @@ def test_generate_answer_fallback_on_invalid_json(dummy_chunks):
 
 def test_generate_answer_fallback_extracts_partial_content(dummy_chunks):
     partial = '{"message_type": "text", "content": "Great product!", "buttons":'
-    with patch('rag_chatbot.ollama.chat', return_value=_mock_ollama_response(partial)):
-        from rag_chatbot import generate_answer
+    with patch('app.rag.ollama.chat', return_value=_mock_ollama_response(partial)):
+        from app.rag import generate_answer
         result = generate_answer("tell me about rubio", dummy_chunks)
     assert result['content'] == 'Great product!'
 
 
 def test_generate_answer_includes_tokens(dummy_chunks):
     payload = json.dumps({'message_type': 'text', 'content': 'ok', 'buttons': None, 'image_url': None})
-    with patch('rag_chatbot.ollama.chat', return_value=_mock_ollama_response(payload)):
-        from rag_chatbot import generate_answer
+    with patch('app.rag.ollama.chat', return_value=_mock_ollama_response(payload)):
+        from app.rag import generate_answer
         result = generate_answer("test", dummy_chunks)
     assert result['prompt_tokens'] == 10
     assert result['completion_tokens'] == 20
@@ -102,8 +102,8 @@ def test_generate_answer_includes_tokens(dummy_chunks):
 
 def test_ingest_qna_pair_upserts_with_correct_metadata():
     mock_collection = MagicMock()
-    with patch('rag_chatbot.get_embedding', return_value=[0.1] * 10):
-        from rag_chatbot import ingest_qna_pair
+    with patch('app.rag.get_embedding', return_value=[0.1] * 10):
+        from app.rag import ingest_qna_pair
         pair = {
             'question': 'What is a stacker?',
             'answer': 'A wooden stacking toy.',
@@ -122,8 +122,8 @@ def test_ingest_qna_pair_upserts_with_correct_metadata():
 
 def test_ingest_qna_pair_document_contains_qa():
     mock_collection = MagicMock()
-    with patch('rag_chatbot.get_embedding', return_value=[0.1] * 10):
-        from rag_chatbot import ingest_qna_pair
+    with patch('app.rag.get_embedding', return_value=[0.1] * 10):
+        from app.rag import ingest_qna_pair
         ingest_qna_pair({'question': 'Q?', 'answer': 'A.'}, mock_collection)
     doc = mock_collection.upsert.call_args[1]['documents'][0]
     assert 'Q?' in doc

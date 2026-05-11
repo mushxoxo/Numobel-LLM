@@ -1,25 +1,15 @@
-import logging
-import os
 import requests
-from dotenv import load_dotenv
 
-load_dotenv()
+from app.log import get_logger
+from app.messaging.client import wa2mation_post
 
-log = logging.getLogger('rag_chatbot')
-
-_TIMEOUT = 10
+log = get_logger()
 
 
 def send_text(phone: str, message: str) -> requests.Response:
-    api_key    = os.getenv("WA2MATION_API_KEY")
-    vendor_uid = os.getenv("WA2MATION_VENDOR_UID")
-    url     = f"https://wa2mation.com/api/{vendor_uid}/contact/send-message"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    resp = requests.post(
-        url,
-        json={"phone_number": phone, "message_body": message},
-        headers=headers,
-        timeout=_TIMEOUT,
+    resp = wa2mation_post(
+        "send-message",
+        {"phone_number": phone, "message_body": message},
     )
     if resp.status_code != 200:
         log.warning("send_text failed | status=%d body=%s", resp.status_code, resp.text[:200])

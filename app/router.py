@@ -1,7 +1,7 @@
-import logging
+from app.log import get_logger
 from app.messaging import send_text, send_media, send_interactive, send_carousel
 
-log = logging.getLogger('rag_chatbot')
+log = get_logger()
 
 # Only approved carousel template. Expand as more are approved.
 _CAROUSEL_TEMPLATE  = "nutoy_stacker"

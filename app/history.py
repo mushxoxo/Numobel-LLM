@@ -1,13 +1,13 @@
 import fcntl
 import json
-import logging
 import os
 import re
 from datetime import datetime, timedelta
 
-from rag_chatbot import MEMORY_LIMIT
+from app.config import MEMORY_LIMIT
+from app.log import get_logger
 
-log = logging.getLogger('rag_chatbot')
+log = get_logger()
 
 _SESSIONS_DIR    = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sessions')
 _SESSION_TIMEOUT = timedelta(minutes=5)

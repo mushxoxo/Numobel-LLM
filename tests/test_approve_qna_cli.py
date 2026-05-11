@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
 import pytest
+import app.refinement.storage as storage
 
 # Make training/ importable without requiring __init__.py
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'training'))
@@ -66,7 +67,8 @@ def test_approve_action_calls_all_three_operations(tmp_path, monkeypatch):
     _write_jsonl(pending, [pair])
 
     monkeypatch.setattr(cli, '_PENDING_PATH', pending)
-    monkeypatch.setattr(cli, '_APPROVED_PATH', approved_file)
+    monkeypatch.setattr(storage, '_PENDING_PATH', pending)
+    monkeypatch.setattr(storage, '_APPROVED_PATH', approved_file)
 
     mock_collection = MagicMock()
     inputs = iter(['a'])
@@ -158,7 +160,8 @@ def test_suggest_refines_and_writes_back_then_approve(tmp_path, monkeypatch):
     pair = _make_pair()
     _write_jsonl(pending, [pair])
     monkeypatch.setattr(cli, '_PENDING_PATH', pending)
-    monkeypatch.setattr(cli, '_APPROVED_PATH', approved_file)
+    monkeypatch.setattr(storage, '_PENDING_PATH', pending)
+    monkeypatch.setattr(storage, '_APPROVED_PATH', approved_file)
 
     mock_collection = MagicMock()
     call_count = 0

@@ -99,11 +99,22 @@ def test_webhook_ignores_missing_phone(client):
     mock_dispatch.assert_not_called()
 
 
-def test_webhook_returns_500_on_exception(client):
+def test_webhook_returns_200_on_exception(client):
+    """Unhandled exceptions return HTTP 200 to prevent wa2mation retry storms."""
     with patch("app.webhook.load_history", side_effect=Exception("DB error")):
         resp = client.post("/webhook", json=INCOMING)
-    assert resp.status_code == 500
+    assert resp.status_code == 200
     assert resp.json["status"] == "error"
+
+
+def test_webhook_ignores_invalid_phone_format(client):
+    with patch("app.webhook.dispatch") as mock_dispatch:
+        resp = client.post("/webhook", json={
+            "contact": {"phone_number": "not-a-phone"},
+            "message": {"body": "hello"},
+        })
+    assert resp.json["status"] == "ignored"
+    mock_dispatch.assert_not_called()
 
 
 def test_webhook_routes_admin_command_to_admin_handler(client):

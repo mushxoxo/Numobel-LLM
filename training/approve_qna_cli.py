@@ -6,7 +6,6 @@
 # Refinement model chosen at startup: [1] qwen2.5:14b (Ollama)  [2] claude-sonnet-4-6 via API
 
 import json
-import logging
 import os
 import sys
 from pathlib import Path
@@ -17,32 +16,19 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import rag_chatbot as rag
+import app.rag as rag
+from app.config import PENDING_PATH as _PENDING_PATH
+from app.log import get_logger
 from app.refinement.engine import chat_turn, extract_patterns
 from app.refinement.constraints import validate_pair
-from app.refinement.storage import append_admin_prefs
+from app.refinement.storage import (
+    append_admin_prefs,
+    mark_approved,
+    append_approved,
+)
+from training.utils import load_jsonl, choose_model
 
-log = logging.getLogger(__name__)
-
-_PROJECT_ROOT  = Path(__file__).resolve().parent.parent
-_PENDING_PATH  = _PROJECT_ROOT / 'training' / 'qna_pairs' / 'pending.jsonl'
-_APPROVED_PATH = _PROJECT_ROOT / 'training' / 'qna_pairs' / 'approved.jsonl'
-
-
-def load_jsonl(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    pairs = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                pairs.append(json.loads(line))
-            except json.JSONDecodeError:
-                log.warning("Skipping malformed JSONL line in %s: %.80s", path.name, line)
-    return pairs
+log = get_logger()
 
 
 def load_unapproved() -> list[dict]:
@@ -55,15 +41,6 @@ def _rewrite_pending(all_pairs: list[dict]) -> None:
             f.write(json.dumps(pair, ensure_ascii=False) + '\n')
 
 
-def mark_approved_in_pending(pair: dict) -> None:
-    all_pairs = load_jsonl(_PENDING_PATH)
-    for p in all_pairs:
-        if p.get('question') == pair.get('question'):
-            p['approved'] = True
-            p.pop('in_review', None)
-    _rewrite_pending(all_pairs)
-
-
 def mark_refined_in_pending(pair: dict) -> None:
     """Write the refined answer back to pending.jsonl to prevent data loss on quit."""
     all_pairs = load_jsonl(_PENDING_PATH)
@@ -71,30 +48,6 @@ def mark_refined_in_pending(pair: dict) -> None:
         if p.get('question') == pair.get('question'):
             p['answer'] = pair['answer']
     _rewrite_pending(all_pairs)
-
-
-def append_approved(pair: dict) -> None:
-    _APPROVED_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(_APPROVED_PATH, 'a') as f:
-        f.write(json.dumps(pair, ensure_ascii=False) + '\n')
-
-
-def choose_refinement_model() -> tuple[str, str | None]:
-    print("\nWhich model to use for refinement?")
-    print("  [1] qwen2.5:14b       (Ollama — local, free)")
-    print("  [2] claude-sonnet-4-6 (Claude API — best quality, uses API key)")
-    choice = input("Choice [1/2]: ").strip()
-
-    if choice == '2':
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        if not api_key:
-            api_key = input("Enter ANTHROPIC_API_KEY: ").strip()
-        if not api_key:
-            print("No API key provided. Falling back to qwen2.5:14b.")
-            return 'qwen2.5:14b', None
-        return 'claude-sonnet-4-6', api_key
-
-    return 'qwen2.5:14b', None
 
 
 def choose_admin_phone() -> str:
@@ -196,11 +149,12 @@ def run_approval_loop(
                     for v in violations:
                         print(f"  • {v}")
                     continue
-                mark_approved_in_pending(pair)
+                identifier = pair.get('pair_id') or pair.get('question', '')
+                mark_approved(identifier)
                 approved_pair = {**pair, 'approved': True}
                 append_approved(approved_pair)
                 rag.ingest_qna_pair(approved_pair, collection)
-                print("✅ Saved + ingested into ChromaDB")
+                print("Saved + ingested into ChromaDB")
                 approved_count += 1
                 break
 
@@ -249,8 +203,6 @@ def run_approval_loop(
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
-
     collection = rag.get_collection()
     if collection.count() == 0:
         print("ChromaDB empty — ingesting products first...")
@@ -262,7 +214,7 @@ def main() -> None:
         return
 
     print(f"Found {len(pairs)} unapproved pairs.")
-    model, api_key = choose_refinement_model()
+    model, api_key = choose_model("refinement")
     phone = choose_admin_phone()
     if model == 'qwen2.5:14b':
         print("Make sure `ollama serve` is running.\n")

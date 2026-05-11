@@ -1,30 +1,43 @@
-import logging
 import os
-import sys
+import re
 import time
+import uuid
 from collections import OrderedDict
 
-# Allow running as `python app/webhook.py` from the project root
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from flask import Flask, request, jsonify
-from dotenv import load_dotenv
 
-import rag_chatbot as rag
+import app.rag as rag
+from app.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, COLLECTION_NAME
+from app.log import get_logger
 from app.router import dispatch
 from app.history import load_history, save_history
 from app.admin import is_admin, needs_admin_handling, handle_admin
 
-load_dotenv()
-
-log = logging.getLogger('rag_chatbot')
+log = get_logger()
 app = Flask(__name__)
+
+_PHONE_RE = re.compile(r"^\+?[0-9]{7,15}$")
 
 # Load ChromaDB once at startup; ingest if empty
 collection = rag.get_collection()
 if collection.count() == 0:
-    log.info("ChromaDB empty — running initial ingest...")
-    rag.ingest_data(collection)
+    log.info("STARTUP | ChromaDB empty — running initial ingest...")
+    try:
+        rag.ingest_data(collection)
+    except Exception:
+        log.critical("STARTUP | ingest failed — bot will serve empty results until fixed")
+
+wa2mation_key = "configured" if os.getenv("WA2MATION_API_KEY") else "MISSING"
+anthropic_key  = "configured" if os.getenv("ANTHROPIC_API_KEY") else "not set"
+flask_debug    = os.getenv("FLASK_DEBUG", "false").lower()
+log.info(
+    "STARTUP | model=%s embed=%s chroma=%s docs=%d",
+    LLM_MODEL, EMBED_MODEL, CHROMA_DIR, collection.count(),
+)
+log.info(
+    "STARTUP | wa2mation=%s anthropic=%s flask_debug=%s",
+    wa2mation_key, anthropic_key, flask_debug,
+)
 
 # In-memory deduplication: {message_id: timestamp}
 # Protects against wa2mation retry duplicates within a 60-second window.
@@ -49,8 +62,9 @@ def _is_duplicate(message_id: str) -> bool:
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    req = uuid.uuid4().hex[:8]
     data = request.json
-    log.debug("WEBHOOK | incoming: %s", data)
+    log.debug("req=%s | incoming: %s", req, data)
 
     try:
         user_message = ((data.get("message") or {}).get("body") or "").strip()
@@ -60,20 +74,30 @@ def webhook():
         if not user_message or not phone:
             return jsonify({"status": "ignored"})
 
-        if message_id and _is_duplicate(message_id):
-            log.debug("WEBHOOK | duplicate message_id=%s — ignored", message_id)
+        if not _PHONE_RE.match(phone):
+            log.debug("req=%s | invalid phone format '%s' — ignored", req, phone)
             return jsonify({"status": "ignored"})
+
+        if message_id and _is_duplicate(message_id):
+            log.debug("req=%s | duplicate message_id=%s — ignored", req, message_id)
+            return jsonify({"status": "ignored"})
+
+        log.info("req=%s | phone=%s msg=%.60r", req, phone, user_message)
 
         # Admin commands bypass the RAG pipeline entirely
         if needs_admin_handling(phone, user_message):
+            log.info("req=%s | admin handler", req)
             handle_admin(phone, user_message, collection)
             return jsonify({"status": "success"})
 
         history      = load_history(phone)
         search_query = rag.rewrite_query(user_message, history)
         hits         = rag.retrieve(collection, search_query)
-        # Pass search_query (rewritten) so the LLM sees the unambiguous question
         result       = rag.generate_answer(search_query, hits, history)
+
+        log.info("req=%s | response type=%s tokens=%d+%d",
+                 req, result.get("message_type"),
+                 result.get("prompt_tokens", 0), result.get("completion_tokens", 0))
 
         dispatch(phone, result, hits)
 
@@ -84,8 +108,8 @@ def webhook():
         return jsonify({"status": "success"})
 
     except Exception as e:
-        log.exception("WEBHOOK | unhandled error: %s", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        log.exception("req=%s | unhandled error: %s", req, e)
+        return jsonify({"status": "error", "message": str(e)})
 
 
 if __name__ == "__main__":

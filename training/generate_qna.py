@@ -3,7 +3,6 @@
 # Output: training/qna_pairs/pending.jsonl
 
 import json
-import logging
 import os
 import re
 import sys
@@ -17,13 +16,16 @@ load_dotenv()
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import ollama
+from app.config import PENDING_PATH as _PENDING_PATH, APPROVED_PATH as _APPROVED_PATH
+from app.log import get_logger
+from app.refinement.storage import ensure_pair_id
+from app.refinement.constraints import validate_pair
+from training.utils import load_jsonl, choose_model
 
-log = logging.getLogger(__name__)
+log = get_logger()
 
-_PROJECT_ROOT  = Path(__file__).resolve().parent.parent
-_DATA_FILE     = _PROJECT_ROOT / 'data' / 'clean_products.json'
-_PENDING_PATH  = _PROJECT_ROOT / 'training' / 'qna_pairs' / 'pending.jsonl'
-_APPROVED_PATH = _PROJECT_ROOT / 'training' / 'qna_pairs' / 'approved.jsonl'
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DATA_FILE    = _PROJECT_ROOT / 'data' / 'clean_products.json'
 
 _VALID_TYPES = {'text', 'interactive', 'media', 'carousel'}
 
@@ -48,22 +50,6 @@ def load_products() -> list[dict]:
         sys.exit(1)
     with open(_DATA_FILE) as f:
         return json.load(f)
-
-
-def load_jsonl(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    pairs = []
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                pairs.append(json.loads(line))
-            except json.JSONDecodeError:
-                log.warning("Skipping malformed JSONL line in %s: %.80s", path.name, line)
-    return pairs
 
 
 def already_done_products() -> set[str]:
@@ -200,30 +186,16 @@ def append_to_pending(pairs: list[dict]) -> None:
     _PENDING_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(_PENDING_PATH, 'a') as f:
         for pair in pairs:
+            ensure_pair_id(pair)
+            violations = validate_pair(pair)
+            if violations:
+                log.warning("Skipping pair with constraint violations: %s | %s", pair.get('question', '')[:60], violations)
+                continue
             f.write(json.dumps(pair, ensure_ascii=False) + '\n')
 
 
-def choose_model() -> tuple[str, str | None]:
-    print("\nWhich model to use for generation?")
-    print("  [1] qwen2.5:14b       (Ollama — local, free)")
-    print("  [2] claude-sonnet-4-6 (Claude API — best quality, uses API key)")
-    choice = input("Choice [1/2]: ").strip()
-
-    if choice == '2':
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        if not api_key:
-            api_key = input("Enter ANTHROPIC_API_KEY: ").strip()
-        if not api_key:
-            print("No API key provided. Falling back to qwen2.5:14b.")
-            return 'qwen2.5:14b', None
-        return 'claude-sonnet-4-6', api_key
-
-    return 'qwen2.5:14b', None
-
-
 def main() -> None:
-    logging.basicConfig(level=logging.WARNING, format='%(levelname)s: %(message)s')
-    model, api_key = choose_model()
+    model, api_key = choose_model("generation")
 
     products = load_products()
     done = already_done_products()

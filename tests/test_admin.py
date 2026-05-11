@@ -96,7 +96,7 @@ def test_admin_off_clears_session(mock_config):
 
 def test_qna_review_loads_pending_pair(mock_config):
     admin_module._sessions[ADMIN_PHONE] = _active_session("menu")
-    with patch("app.admin._load_next_pending", return_value=SAMPLE_PAIR), \
+    with patch("app.admin.load_next_pending", return_value=SAMPLE_PAIR), \
          patch("app.admin.send_text"), \
          patch("app.admin.send_interactive"):
         admin_module.handle_admin(ADMIN_PHONE, "QnA Review", MagicMock())
@@ -106,7 +106,7 @@ def test_qna_review_loads_pending_pair(mock_config):
 
 def test_train_shortcut_same_as_qna_review(mock_config):
     admin_module._sessions[ADMIN_PHONE] = _active_session("menu")
-    with patch("app.admin._load_next_pending", return_value=SAMPLE_PAIR), \
+    with patch("app.admin.load_next_pending", return_value=SAMPLE_PAIR), \
          patch("app.admin.send_text"), \
          patch("app.admin.send_interactive"):
         admin_module.handle_admin(ADMIN_PHONE, ":train", MagicMock())
@@ -114,7 +114,7 @@ def test_train_shortcut_same_as_qna_review(mock_config):
 
 def test_qna_review_no_pending_sends_message(mock_config):
     admin_module._sessions[ADMIN_PHONE] = _active_session("menu")
-    with patch("app.admin._load_next_pending", return_value=None), \
+    with patch("app.admin.load_next_pending", return_value=None), \
          patch("app.admin.send_text") as mock_text, \
          patch("app.admin.send_interactive"):
         admin_module.handle_admin(ADMIN_PHONE, ":train", MagicMock())
@@ -128,9 +128,9 @@ def test_approve_ingests_pair_and_loads_next(mock_config):
     mock_collection = MagicMock()
     next_pair = {**SAMPLE_PAIR, "question": "What is the price?"}
     admin_module._sessions[ADMIN_PHONE] = _active_session("training_review", SAMPLE_PAIR)
-    with patch("app.admin._load_next_pending", return_value=next_pair), \
-         patch("app.admin._mark_approved_in_pending"), \
-         patch("app.admin._append_approved"), \
+    with patch("app.admin.load_next_pending", return_value=next_pair), \
+         patch("app.admin.mark_approved"), \
+         patch("app.admin.append_approved"), \
          patch("app.admin.send_text"), \
          patch("app.admin.send_interactive"), \
          patch("app.admin.rag") as mock_rag:
@@ -141,9 +141,9 @@ def test_approve_ingests_pair_and_loads_next(mock_config):
 
 def test_approve_all_done_returns_to_menu(mock_config):
     admin_module._sessions[ADMIN_PHONE] = _active_session("training_review", SAMPLE_PAIR)
-    with patch("app.admin._load_next_pending", return_value=None), \
-         patch("app.admin._mark_approved_in_pending"), \
-         patch("app.admin._append_approved"), \
+    with patch("app.admin.load_next_pending", return_value=None), \
+         patch("app.admin.mark_approved"), \
+         patch("app.admin.append_approved"), \
          patch("app.admin.send_text"), \
          patch("app.admin.send_interactive"), \
          patch("app.admin.rag"):
@@ -159,7 +159,7 @@ def test_refine_transitions_to_training_chat(mock_config):
     with patch("app.admin.send_text"), \
          patch("app.admin.send_interactive"), \
          patch("app.admin.lock_pair", return_value=True), \
-         patch("app.admin._load_style_examples", return_value=[]), \
+         patch("app.admin.load_style_examples", return_value=[]), \
          patch("app.admin.save_refine_state"):
         admin_module.handle_admin(ADMIN_PHONE, "Refine", MagicMock())
     state = admin_module._sessions[ADMIN_PHONE]["state"]

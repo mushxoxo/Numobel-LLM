@@ -4,15 +4,17 @@ Used by both app/admin.py (WhatsApp) and training/approve_qna_cli.py (CLI).
 """
 
 import json
-import logging
 
 import ollama
 
+from app.log import get_logger
 from app.refinement.constraints import validate_pair
 from app.refinement.prompts import build_system_prompt, build_pattern_extraction_prompt
 from app.refinement.storage import save_refine_state, load_admin_prefs
 
-log = logging.getLogger('rag_chatbot')
+log = get_logger()
+
+_anthropic_client = None  # lazy singleton; avoids re-instantiation per call
 
 _FALLBACK_REPLY = (
     "⚠️ I didn't understand my own response. Could you rephrase your suggestion?"
@@ -46,8 +48,11 @@ def _normalize_refined(updated: dict, original: dict) -> dict:
 def _call_llm(messages: list[dict], model: str, api_key: str | None) -> str:
     """Call LLM and return raw text response."""
     if model.startswith('claude') and api_key:
+        global _anthropic_client
         import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
+        if _anthropic_client is None:
+            _anthropic_client = anthropic.Anthropic(api_key=api_key)
+        client = _anthropic_client
         system_content = next(
             (m['content'] for m in messages if m['role'] == 'system'), ''
         )
