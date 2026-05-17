@@ -65,7 +65,18 @@ def _startup_orchestrator() -> None:
     """Run startup work in dependency order and set _ready only on success."""
     global _ready
     try:
-        log.info("STARTUP | step 1/3 - SQLite sync")
+        # Step 0 has its own try/except — failure is non-fatal
+        try:
+            log.info("STARTUP | step 0/4 - computing intent centroids")
+            from app.intent import compute_centroids
+            compute_centroids()
+        except Exception:
+            log.warning(
+                "STARTUP | step 0 failed — intent classifier degraded to GENERAL_QNA",
+                exc_info=True,
+            )
+
+        log.info("STARTUP | step 1/4 - SQLite sync")
         from app.db import sync_products
 
         sync_result = sync_products()
@@ -74,7 +85,7 @@ def _startup_orchestrator() -> None:
             {k: v for k, v in sync_result.items() if k in ("added", "updated", "deleted")},
         )
 
-        log.info("STARTUP | step 2/3 - ChromaDB product ingest into %s", PRODUCTS_COLLECTION)
+        log.info("STARTUP | step 2/4 - ChromaDB product ingest into %s", PRODUCTS_COLLECTION)
         from app.rag import get_collection, ingest_data
 
         products_collection = get_collection(PRODUCTS_COLLECTION)
@@ -89,7 +100,7 @@ def _startup_orchestrator() -> None:
         if products_collection.count() == 0 or sync_result.get("changed_product_names"):
             ingest_data(products_collection)
 
-        log.info("STARTUP | step 3/3 - QnA migration check")
+        log.info("STARTUP | step 3/4 - QnA migration check")
         _migrate_qna_if_needed()
 
         _ready = True

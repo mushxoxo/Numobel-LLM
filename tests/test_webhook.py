@@ -4,6 +4,8 @@ import sys
 import pytest
 from unittest.mock import patch, MagicMock
 
+from app.intent import IntentEnum
+
 
 INCOMING = {
     "contact": {"phone_number": "919999999999"},
@@ -37,36 +39,51 @@ def client():
 
 
 def test_webhook_returns_success(client):
+    emb = [0.1] * 1024
     with patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.get_embedding", return_value=emb), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GENERAL_QNA, "confidence": 0.8, "layer": "embedding"}), \
+         patch("app.webhook.rag.get_collection") as mock_col, \
          patch("app.webhook.rag.rewrite_query", return_value="hi"), \
          patch("app.webhook.rag.retrieve", return_value=[]), \
          patch("app.webhook.rag.generate_answer", return_value=RAG_RESULT), \
          patch("app.webhook.dispatch") as mock_dispatch, \
          patch("app.webhook.save_history"):
+        mock_col.return_value.query.return_value = {"distances": [[1.0]], "documents": [[]], "metadatas": [[]]}
         resp = client.post("/webhook", json=INCOMING)
     assert resp.status_code == 200
     assert resp.json["status"] == "success"
 
 
 def test_webhook_calls_dispatch_with_result_and_hits(client):
+    emb = [0.1] * 1024
     hits = [{"text": "chunk", "metadata": {"images": "https://example.com/img.jpg"}}]
     with patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.get_embedding", return_value=emb), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GENERAL_QNA, "confidence": 0.8, "layer": "embedding"}), \
+         patch("app.webhook.rag.get_collection") as mock_col, \
          patch("app.webhook.rag.rewrite_query", return_value="hi"), \
          patch("app.webhook.rag.retrieve", return_value=hits), \
          patch("app.webhook.rag.generate_answer", return_value=RAG_RESULT), \
          patch("app.webhook.dispatch") as mock_dispatch, \
          patch("app.webhook.save_history"):
+        mock_col.return_value.query.return_value = {"distances": [[1.0]], "documents": [[]], "metadatas": [[]]}
         client.post("/webhook", json=INCOMING)
     mock_dispatch.assert_called_once_with("919999999999", RAG_RESULT, hits)
 
 
 def test_webhook_saves_history_after_response(client):
+    emb = [0.1] * 1024
     with patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.get_embedding", return_value=emb), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GENERAL_QNA, "confidence": 0.8, "layer": "embedding"}), \
+         patch("app.webhook.rag.get_collection") as mock_col, \
          patch("app.webhook.rag.rewrite_query", return_value="hi"), \
          patch("app.webhook.rag.retrieve", return_value=[]), \
          patch("app.webhook.rag.generate_answer", return_value=RAG_RESULT), \
          patch("app.webhook.dispatch"), \
          patch("app.webhook.save_history") as mock_save:
+        mock_col.return_value.query.return_value = {"distances": [[1.0]], "documents": [[]], "metadatas": [[]]}
         client.post("/webhook", json=INCOMING)
     mock_save.assert_called_once()
     phone, history = mock_save.call_args[0]
@@ -147,14 +164,19 @@ def test_webhook_routes_admin_command_to_admin_handler(client):
 
 
 def test_webhook_skips_admin_for_regular_users(client):
+    emb = [0.1] * 1024
     with patch("app.webhook.needs_admin_handling", return_value=False), \
          patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.get_embedding", return_value=emb), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GENERAL_QNA, "confidence": 0.8, "layer": "embedding"}), \
+         patch("app.webhook.rag.get_collection") as mock_col, \
          patch("app.webhook.rag.rewrite_query", return_value="hi"), \
          patch("app.webhook.rag.retrieve", return_value=[]), \
          patch("app.webhook.rag.generate_answer", return_value=RAG_RESULT), \
          patch("app.webhook.dispatch") as mock_dispatch, \
          patch("app.webhook.save_history"), \
          patch("app.webhook.handle_admin") as mock_admin:
+        mock_col.return_value.query.return_value = {"distances": [[1.0]], "documents": [[]], "metadatas": [[]]}
         client.post("/webhook", json=INCOMING)
     mock_dispatch.assert_called_once()
     mock_admin.assert_not_called()
@@ -224,3 +246,105 @@ def test_webhook_returns_503_before_ready(health_client):
 
     assert resp.status_code == 503
     assert resp.get_json()["status"] == "starting"
+
+
+# ─── Intent-conditional routing tests (02-03) ────────────────────────────────
+
+def test_greeting_bypasses_retrieval(client):
+    """GREETING intent: no rag.rewrite_query, retrieve, or generate_answer calls."""
+    with patch("app.webhook._startup._ready", True), \
+         patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GREETING, "confidence": 1.0, "layer": "rule"}), \
+         patch("app.webhook.rag.rewrite_query") as mock_rewrite, \
+         patch("app.webhook.rag.retrieve") as mock_retrieve, \
+         patch("app.webhook.rag.generate_answer") as mock_gen, \
+         patch("app.webhook.dispatch") as mock_dispatch, \
+         patch("app.webhook.save_history"):
+        resp = client.post("/webhook", json=INCOMING)
+        assert resp.status_code == 200
+        mock_rewrite.assert_not_called()
+        mock_retrieve.assert_not_called()
+        mock_gen.assert_not_called()
+        mock_dispatch.assert_called_once()
+        call_args = mock_dispatch.call_args[0]
+        assert call_args[1]["message_type"] == "text"
+
+
+def test_oos_bypasses_retrieval(client):
+    """OUT_OF_SCOPE intent: generate_answer not called."""
+    with patch("app.webhook._startup._ready", True), \
+         patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.OUT_OF_SCOPE, "confidence": 1.0, "layer": "rule"}), \
+         patch("app.webhook.rag.generate_answer") as mock_gen, \
+         patch("app.webhook.dispatch"), \
+         patch("app.webhook.save_history"):
+        resp = client.post("/webhook", json=INCOMING)
+        assert resp.status_code == 200
+        mock_gen.assert_not_called()
+
+
+def test_general_qna_runs_full_pipeline(client):
+    """GENERAL_QNA: rewrite_query, retrieve, and generate_answer all called."""
+    emb = [0.1] * 1024
+    with patch("app.webhook._startup._ready", True), \
+         patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.get_embedding", return_value=emb), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GENERAL_QNA, "confidence": 0.8, "layer": "embedding"}), \
+         patch("app.webhook.rag.get_collection") as mock_col, \
+         patch("app.webhook.rag.rewrite_query", return_value="query") as mock_rewrite, \
+         patch("app.webhook.rag.retrieve", return_value=[]) as mock_retrieve, \
+         patch("app.webhook.rag.generate_answer", return_value=RAG_RESULT) as mock_gen, \
+         patch("app.webhook.dispatch"), \
+         patch("app.webhook.save_history"):
+        # QnA override returns distance > threshold → falls through to full RAG
+        mock_col.return_value.query.return_value = {"distances": [[1.0]], "documents": [[]], "metadatas": [[]]}
+        resp = client.post("/webhook", json=INCOMING)
+        assert resp.status_code == 200
+        mock_rewrite.assert_called_once()
+        mock_retrieve.assert_called_once()
+        mock_gen.assert_called_once()
+
+
+def test_qna_override_skips_llm(client):
+    """QnA override (distance < threshold): generate_answer NOT called."""
+    emb = [0.1] * 1024
+    stored_meta = {"message_type": "text", "buttons": "[]", "image_url": None}
+    with patch("app.webhook._startup._ready", True), \
+         patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.get_embedding", return_value=emb), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GENERAL_QNA, "confidence": 0.8, "layer": "embedding"}), \
+         patch("app.webhook.rag.get_collection") as mock_col, \
+         patch("app.webhook.rag.generate_answer") as mock_gen, \
+         patch("app.webhook.dispatch"), \
+         patch("app.webhook.save_history"):
+        mock_col.return_value.query.return_value = {
+            "distances": [[0.10]],
+            "documents": [["Here is info about rubio monocoat"]],
+            "metadatas": [[stored_meta]],
+        }
+        resp = client.post("/webhook", json=INCOMING)
+        assert resp.status_code == 200
+        mock_gen.assert_not_called()
+
+
+def test_history_includes_intent_field(client):
+    """History user entry must include 'intent' field after a successful request."""
+    emb = [0.1] * 1024
+    with patch("app.webhook._startup._ready", True), \
+         patch("app.webhook.load_history", return_value=[]), \
+         patch("app.webhook.rag.get_embedding", return_value=emb), \
+         patch("app.webhook.classify_intent", return_value={"intent": IntentEnum.GENERAL_QNA, "confidence": 0.8, "layer": "embedding"}), \
+         patch("app.webhook.rag.get_collection") as mock_col, \
+         patch("app.webhook.rag.rewrite_query", return_value="query"), \
+         patch("app.webhook.rag.retrieve", return_value=[]), \
+         patch("app.webhook.rag.generate_answer", return_value=RAG_RESULT), \
+         patch("app.webhook.dispatch"), \
+         patch("app.webhook.save_history") as mock_save:
+        mock_col.return_value.query.return_value = {"distances": [[1.0]], "documents": [[]], "metadatas": [[]]}
+        resp = client.post("/webhook", json=INCOMING)
+        assert resp.status_code == 200
+        saved_history = mock_save.call_args[0][1]
+        user_entries = [e for e in saved_history if e["role"] == "user"]
+        assert len(user_entries) >= 1
+        assert "intent" in user_entries[-1]
+        assert user_entries[-1]["intent"] == "general_qna"

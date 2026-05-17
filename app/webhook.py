@@ -6,8 +6,11 @@ from collections import OrderedDict
 
 from flask import Flask, request, jsonify
 
+import json
+
 import app.rag as rag
-from app.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, PRODUCTS_COLLECTION
+from app.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, PRODUCTS_COLLECTION, QNA_COLLECTION, QNA_OVERRIDE_THRESHOLD
+from app.intent import classify_intent, IntentEnum
 from app.log import get_logger
 from app.router import dispatch
 from app.history import load_history, save_history
@@ -89,18 +92,104 @@ def webhook():
             handle_admin(phone, user_message, collection)
             return jsonify({"status": "success"})
 
-        history      = load_history(phone)
-        search_query = rag.rewrite_query(user_message, history)
-        hits         = rag.retrieve(collection, search_query)
-        result       = rag.generate_answer(search_query, hits, history)
+        history = load_history(phone)
 
-        log.info("req=%s | response type=%s tokens=%d+%d",
-                 req, result.get("message_type"),
-                 result.get("prompt_tokens", 0), result.get("completion_tokens", 0))
+        # Layer 1 classification (no embedding needed)
+        clf = classify_intent(text=user_message, embedding=None, history=history)
+        query_embedding = None
 
+        if clf["layer"] != "rule":
+            # Layer 1 didn't fire — compute embedding once for Layer 2 + QnA override
+            query_embedding = rag.get_embedding(user_message)
+            clf = classify_intent(text=user_message, embedding=query_embedding, history=history)
+
+        log.debug(
+            "req=%s | intent=%s confidence=%.2f layer=%s",
+            req, clf["intent"], clf["confidence"], clf["layer"],
+        )
+
+        # Intent-conditional routing
+        if clf["intent"] == IntentEnum.GREETING:
+            result = {
+                "message_type": "text",
+                "content": "Welcome to Numobel! We carry Rubio Monocoat, Nuacoustics, Nutoy, Nupanel, and Nuwork. How can I help?",
+                "buttons": None, "image_url": None, "prompt_tokens": 0, "completion_tokens": 0,
+            }
+            hits = []
+
+        elif clf["intent"] == IntentEnum.CHITCHAT:
+            result = {
+                "message_type": "text",
+                "content": "I'm here to help with Numobel products! Ask me about Rubio Monocoat, Nuacoustics, Nutoy, Nupanel, or Nuwork.",
+                "buttons": None, "image_url": None, "prompt_tokens": 0, "completion_tokens": 0,
+            }
+            hits = []
+
+        elif clf["intent"] == IntentEnum.OUT_OF_SCOPE:
+            result = {
+                "message_type": "text",
+                "content": "I can only help with product questions. For orders and delivery, please contact Numobel support directly.",
+                "buttons": None, "image_url": None, "prompt_tokens": 0, "completion_tokens": 0,
+            }
+            hits = []
+
+        elif clf["intent"] == IntentEnum.BRAND_DISCOVERY:
+            result = {
+                "message_type": "text",
+                "content": "We carry 5 brands: Rubio Monocoat, Nuacoustics, Nutoy, Nupanel, and Nuwork. Which brand would you like to know more about?",
+                "buttons": None, "image_url": None, "prompt_tokens": 0, "completion_tokens": 0,
+            }
+            hits = []  # Phase 3 will replace with SQLite-driven interactive message
+
+        elif clf["intent"] == IntentEnum.BRAND_DEEP_DIVE:
+            result = {
+                "message_type": "text",
+                "content": "I can tell you about our brands. Which brand are you interested in?",
+                "buttons": None, "image_url": None, "prompt_tokens": 0, "completion_tokens": 0,
+            }
+            hits = []  # Phase 3 will replace with SQLite brand query
+
+        else:
+            # PRODUCT_LINE_QUERY, SPECIFIC_PRODUCT, GENERAL_QNA — full RAG with QnA override
+            hits = []
+            result = None
+
+            # QnA override check (only when embedding is available)
+            if query_embedding is not None:
+                qna_col = rag.get_collection(QNA_COLLECTION)
+                qna_results = qna_col.query(
+                    query_embeddings=[query_embedding],
+                    n_results=1,
+                    include=["documents", "metadatas", "distances"],
+                )
+                if qna_results["distances"][0] and qna_results["distances"][0][0] < QNA_OVERRIDE_THRESHOLD:
+                    stored = qna_results["metadatas"][0][0]
+                    try:
+                        buttons = json.loads(stored.get("buttons", "[]")) or None
+                    except (json.JSONDecodeError, TypeError):
+                        buttons = None
+                    result = {
+                        "message_type": stored.get("message_type", "text"),
+                        "content": qna_results["documents"][0][0],
+                        "buttons": buttons,
+                        "image_url": stored.get("image_url") or None,
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                    }
+
+            if result is None:
+                # Full RAG pipeline
+                search_query = rag.rewrite_query(user_message, history)
+                hits = rag.retrieve(collection, search_query)
+                result = rag.generate_answer(search_query, hits, history)
+
+        log.info(
+            "req=%s | response type=%s tokens=%d+%d",
+            req, result["message_type"],
+            result.get("prompt_tokens", 0), result.get("completion_tokens", 0),
+        )
         dispatch(phone, result, hits)
-
-        history.append({"role": "user",      "content": user_message})
+        history.append({"role": "user", "content": user_message, "intent": clf["intent"].value})
         history.append({"role": "assistant", "content": result["content"]})
         save_history(phone, history)
 
