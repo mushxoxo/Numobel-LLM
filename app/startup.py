@@ -85,16 +85,22 @@ def _startup_orchestrator() -> None:
             {k: v for k, v in sync_result.items() if k in ("added", "updated", "deleted")},
         )
 
-        # Step 1.5: Build system prompt and initialize hallucination validator
+        # Step 1.5: Build system prompt and initialize hallucination validator.
+        # Product names from the catalogue are loaded alongside brand names so the
+        # validator does not flag legitimate product-name tokens (e.g. "Waldorf",
+        # "Poplar", "Building") as unauthorized entities.
         log.info("STARTUP | step 1.5/4 - building authorized system prompt + validator init")
         try:
             from app.db import get_db
             import app.rag as _rag
             from app.validators.hallucination import initialize_validator
-            rows   = get_db().execute("SELECT name FROM brands").fetchall()
+            db     = get_db()
+            rows   = db.execute("SELECT name FROM brands").fetchall()
             brands = [row["name"] for row in rows]
+            prod_rows     = db.execute("SELECT name FROM products").fetchall()
+            product_names = [row["name"] for row in prod_rows]
             _rag.SYSTEM_PROMPT = _rag.build_system_prompt(brands)
-            initialize_validator(brands)
+            initialize_validator(brands, product_names)
             log.info(
                 "STARTUP | system prompt built with %d authorized brands: %s",
                 len(brands), brands,

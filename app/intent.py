@@ -7,7 +7,7 @@ Public API:
   - compute_centroids() -> None  (called by startup orchestrator)
 
 No LLM calls, no ChromaDB queries — pure in-memory classification.
-Layer 1: compiled regex rules (greeting, OOS, chitchat) — no embedding needed.
+Layer 1: compiled regex rules (greeting, OOS, chitchat, brand names) — no embedding needed.
 Layer 2: cosine similarity against per-intent centroid embeddings.
 """
 
@@ -42,6 +42,23 @@ class IntentEnum(str, Enum):
     CHITCHAT           = "chitchat"
 
 
+# Intents that carry no product context — never inherit these from history.
+# A greeting or out-of-scope prior should never override a tentative product query.
+_NON_INHERITABLE: frozenset[IntentEnum] = frozenset({
+    IntentEnum.GREETING,
+    IntentEnum.CHITCHAT,
+    IntentEnum.OUT_OF_SCOPE,
+})
+
+# Vague product intents — when a tentative embedding best-match is one of these but
+# the prior is a more-specific product intent (e.g., brand_deep_dive), inherit the
+# more-specific prior instead of accepting the vague match.  (INTENT-11 / Bug 1 fix)
+_VAGUE_PRODUCT_INTENTS: frozenset[IntentEnum] = frozenset({
+    IntentEnum.BRAND_DISCOVERY,
+    IntentEnum.GENERAL_QNA,
+})
+
+
 # ─── Layer 1 compiled patterns ────────────────────────────────────────────────
 
 _GREETING_RE = re.compile(
@@ -65,6 +82,13 @@ _CHITCHAT_EXACT = frozenset({
     "thanks", "thank you", "ok", "okay", "got it", "nice", "cool",
     "great", "awesome", "bye", "goodbye", "no thanks", "not interested",
 })
+
+# Standalone brand-name queries — match when the entire message is (just) a brand name.
+# Returns brand_deep_dive immediately, bypassing centroid scoring.  (INTENT-12 / Bug 2 fix)
+_BRAND_NAME_RE = re.compile(
+    r"^(rubio\s+monocoat|nuacoustics|nutoy|nupanel|nuwork)[\s!?.]*$",
+    re.IGNORECASE,
+)
 
 
 # ─── Private helpers ──────────────────────────────────────────────────────────
@@ -98,6 +122,8 @@ def _layer1_classify(text: str) -> "dict | None":
         return {"intent": IntentEnum.OUT_OF_SCOPE, "confidence": 1.0, "layer": "rule"}
     if t_lower in _CHITCHAT_EXACT:
         return {"intent": IntentEnum.CHITCHAT, "confidence": 1.0, "layer": "rule"}
+    if _BRAND_NAME_RE.fullmatch(t):
+        return {"intent": IntentEnum.BRAND_DEEP_DIVE, "confidence": 1.0, "layer": "rule"}
     return None
 
 
@@ -106,7 +132,22 @@ def _layer2_classify(
     history: "list[dict] | None",
     text: str,
 ) -> dict:
-    """Layer 2: cosine centroid classification with optional multi-turn inherit."""
+    """Layer 2: cosine centroid classification with optional multi-turn inherit.
+
+    Inherit rule (INTENT-06 / INTENT-09 / INTENT-10 / INTENT-11):
+      Inherit is applied only when ALL of the following hold:
+        1. best_sim is tentative (TENTATIVE_THRESHOLD ≤ best_sim < CONFIDENCE_THRESHOLD)
+        2. word_count < INTENT_SHORT_MSG_TOKENS  (short, ambiguous message)
+        3. prior is inheritable (not in _NON_INHERITABLE)
+        4. One of:
+           a. best_intent == prior  (embedding already agrees with prior direction), OR
+           b. best_intent is non-product (chitchat/greeting/out_of_scope) — product prior wins, OR
+           c. best_intent is a vague product intent (brand_discovery / general_qna) AND
+              prior is NOT a vague product intent — more-specific prior wins.
+
+      Condition 4b/4c is the INTENT-10/11 fix: a more-specific prior (brand_deep_dive) must
+      not lose to a vague tentative match (brand_discovery, general_qna).
+    """
     vec = np.array(embedding, dtype=float)
     best_intent = IntentEnum.GENERAL_QNA
     best_sim = -1.0
@@ -126,13 +167,39 @@ def _layer2_classify(
     prior = _prior_intent(history or [])
     word_count = len(text.split())
 
+    # Only inherit product-relevant priors. Greeting / chitchat / out-of-scope carry
+    # no product context and must never override a tentative product embedding match.
+    inheritable_prior = prior if (prior and prior not in _NON_INHERITABLE) else None
+
     if best_sim >= INTENT_CONFIDENCE_THRESHOLD:
         result = {"intent": best_intent, "confidence": best_sim, "layer": "embedding"}
         fallback_reason = None
     elif best_sim >= INTENT_TENTATIVE_THRESHOLD:
-        if word_count < INTENT_SHORT_MSG_TOKENS and prior:
-            result = {"intent": prior, "confidence": best_sim, "layer": "embedding_inherit"}
-            fallback_reason = f"tentative+short({word_count}w)+inherit_from_{prior.value}"
+        # Inherit rules (INTENT-06 / INTENT-09 / INTENT-10 / INTENT-11):
+        #   ALWAYS inherit when: prior is product-relevant AND best is non-product
+        #     (chitchat/greeting/out_of_scope) — a product prior beats a non-product match.
+        #   ALWAYS inherit when: prior is a specific product intent AND best is a vague
+        #     product intent (brand_discovery / general_qna) — specificity wins.
+        #   ONLY inherit when prior==best when: both are specific product intents — prevents
+        #     a generic product prior from overriding a specific product match at the same level.
+        _best_is_non_product  = best_intent in _NON_INHERITABLE
+        _best_is_vague        = best_intent in _VAGUE_PRODUCT_INTENTS
+        _prior_is_specific    = (
+            inheritable_prior is not None
+            and inheritable_prior not in _VAGUE_PRODUCT_INTENTS
+        )
+        _should_inherit = (
+            word_count < INTENT_SHORT_MSG_TOKENS
+            and inheritable_prior is not None
+            and (
+                _best_is_non_product
+                or (_best_is_vague and _prior_is_specific)
+                or inheritable_prior == best_intent
+            )
+        )
+        if _should_inherit:
+            result = {"intent": inheritable_prior, "confidence": best_sim, "layer": "embedding_inherit"}
+            fallback_reason = f"tentative+short({word_count}w)+inherit_from_{inheritable_prior.value}"
         else:
             result = {"intent": best_intent, "confidence": best_sim, "layer": "embedding"}
             fallback_reason = f"tentative+no_inherit(words={word_count},prior={prior})"
@@ -185,7 +252,12 @@ def classify_intent(
         )
         return {"intent": IntentEnum.GENERAL_QNA, "confidence": 0.0, "layer": "fallback"}
 
-    return _layer2_classify(embedding or [], history, text)
+    # Skip Layer 2 entirely when no embedding is provided — an all-zero vector would
+    # produce meaningless scores and misleading debug log lines.
+    if not embedding:
+        return {"intent": IntentEnum.GENERAL_QNA, "confidence": 0.0, "layer": "fallback_no_embedding"}
+
+    return _layer2_classify(embedding, history, text)
 
 
 def compute_centroids() -> None:

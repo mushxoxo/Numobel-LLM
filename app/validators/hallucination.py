@@ -6,11 +6,15 @@ AUTHORIZED_BRANDS is populated at startup by initialize_validator().
 """
 import re
 
-from app.config import HALLUCINATION_SEVERE_PATTERNS, HALLUCINATION_RECOVERABLE_PATTERNS
+from app.config import (
+    HALLUCINATION_SEVERE_PATTERNS,
+    HALLUCINATION_RECOVERABLE_PATTERNS,
+    HALLUCINATION_IMAGE_URL_BLOCKLIST,
+)
 from app.log import get_logger
 from app.validators.response import ValidationResult
 
-__all__ = ["validate_response", "initialize_validator", "AUTHORIZED_BRANDS", "KNOWN_SAFE_TERMS"]
+__all__ = ["validate_response", "initialize_validator", "AUTHORIZED_BRANDS", "KNOWN_SAFE_TERMS", "is_blocked_image_url"]
 
 log = get_logger()
 
@@ -34,18 +38,52 @@ _RECOVERABLE_RE = [re.compile(p, re.IGNORECASE) for p in HALLUCINATION_RECOVERAB
 _ENTITY_RE      = re.compile(r'\b[A-Z][a-z]{2,}(?:[A-Z][a-z]*)?\b')
 
 
-def initialize_validator(brands: list[str]) -> None:
-    """Populate AUTHORIZED_BRANDS from brand names. Idempotent — clears first."""
+def is_blocked_image_url(url: str | None) -> bool:
+    """Return True if url is a placeholder/hallucinated domain that must never reach users.
+
+    Checks against HALLUCINATION_IMAGE_URL_BLOCKLIST from app.config.
+    Case-insensitive substring match so sub-paths are also caught.
+    """
+    if not url:
+        return False
+    url_lower = url.lower()
+    return any(blocked in url_lower for blocked in HALLUCINATION_IMAGE_URL_BLOCKLIST)
+
+
+def initialize_validator(brands: list[str], product_names: list[str] | None = None) -> None:
+    """Populate AUTHORIZED_BRANDS from brand and product names. Idempotent — clears first.
+
+    Args:
+        brands: Top-level brand names (e.g. ["Rubio Monocoat", "Nutoy"]).
+        product_names: Individual product names from the catalogue
+            (e.g. ["Waldorf", "Building Block Series", "Poplar"]). Each name
+            is split into tokens so multi-word names contribute every word.
+            Pass an empty list or None to skip (backwards-compatible).
+    """
     global AUTHORIZED_BRANDS, _AUTHORIZED_BRAND_NAMES
     AUTHORIZED_BRANDS.clear()
     _AUTHORIZED_BRAND_NAMES.clear()
     _AUTHORIZED_BRAND_NAMES.extend(brands)
-    for brand in brands:
-        tokens = brand.split()
+
+    def _add_name(name: str) -> None:
+        # Split on whitespace and hyphens — DB product names use both as separators
+        # e.g. "Nutoy-On Wheels-Rabbit" → ["Nutoy", "On", "Wheels", "Rabbit"]
+        tokens = re.split(r'[\s\-]+', name)
         for token in tokens:
-            AUTHORIZED_BRANDS.add(token)
-        AUTHORIZED_BRANDS.add(brand)
-    log.info("HALLUCINATION | validator initialized with %d brands: %s", len(brands), brands)
+            if token:
+                AUTHORIZED_BRANDS.add(token)
+        AUTHORIZED_BRANDS.add(name)
+
+    for brand in brands:
+        _add_name(brand)
+
+    for product in (product_names or []):
+        _add_name(product)
+
+    log.info(
+        "HALLUCINATION | validator initialized with %d brands, %d products (%d total tokens)",
+        len(brands), len(product_names or []), len(AUTHORIZED_BRANDS),
+    )
 
 
 def _extract_user_entities(user_query: str, history: list[dict] | None) -> set[str]:

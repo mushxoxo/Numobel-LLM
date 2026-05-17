@@ -84,3 +84,15 @@ HALLUCINATION_RECOVERABLE_PATTERNS = [
     "whereas",
     "in comparison",
 ]
+
+# Domains that must never appear as image_url values — LLM placeholder/hallucination domains.
+# Any image_url containing one of these substrings is treated as invalid and stripped.
+HALLUCINATION_IMAGE_URL_BLOCKLIST: list[str] = [
+    "example.com",
+    "placeholder.com",
+    "via.placeholder",
+    "dummyimage.com",
+    "lorempixel.com",
+    "picsum.photos",
+    "placeimg.com",
+]

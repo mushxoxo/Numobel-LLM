@@ -12,9 +12,10 @@ import app.rag as rag
 from app.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, PRODUCTS_COLLECTION, QNA_COLLECTION, QNA_OVERRIDE_THRESHOLD
 from app.intent import classify_intent, IntentEnum
 from app.log import get_logger
-from app.router import dispatch
+from app.router import dispatch, _images_from_hits
 from app.planner import plan_response
 from app.validators import validate_whatsapp_response, validate_response, AUTHORIZED_BRANDS
+from app.validators.hallucination import is_blocked_image_url
 from app.history import load_history, save_history
 from app.admin import is_admin, needs_admin_handling, handle_admin
 from app.startup import run_startup
@@ -43,6 +44,8 @@ run_startup()
 _seen_ids: OrderedDict = OrderedDict()
 _DEDUP_TTL = 60  # seconds
 
+_ENTITY_TOKEN_RE = re.compile(r'\b[A-Z][a-z]{2,}(?:[A-Z][a-z]*)?\b')
+
 
 def _is_duplicate(message_id: str) -> bool:
     """Return True if this message_id was already processed within the TTL window."""
@@ -57,6 +60,68 @@ def _is_duplicate(message_id: str) -> bool:
         return True
     _seen_ids[message_id] = now
     return False
+
+
+def _hit_entity_tokens(hits: list[dict]) -> set[str]:
+    """Extract capitalized name tokens from ChromaDB hit metadata.
+
+    Adds product and brand names found in the retrieved chunks to the
+    allowed-entities set so the hallucination validator never flags terms
+    that are grounded in the actual retrieval context.
+    """
+    tokens: set[str] = set()
+    for hit in hits:
+        meta = hit.get("metadata", {})
+        for field in ("name", "brand", "product_line"):
+            value = meta.get(field) or ""
+            for token in value.split():
+                tokens.add(token)
+        # Also capture any capitalized tokens from the document text itself
+        doc = hit.get("document", "") or ""
+        tokens.update(_ENTITY_TOKEN_RE.findall(doc))
+    return tokens
+
+
+def _resolve_media_image_url(result: dict, hits: list[dict]) -> dict:
+    """Ensure media responses carry a real image URL, never a hallucinated placeholder.
+
+    When message_type is 'media' and the LLM-supplied image_url is absent or
+    matches a blocked placeholder domain (e.g. example.com), replace it with
+    the first real image URL found in the ChromaDB hit metadata.  If no real
+    image is available either, downgrade message_type to 'text' so the router
+    never forwards a fake URL to WhatsApp.
+
+    Returns a (possibly mutated) copy of result — original dict is not modified.
+    """
+    if result.get("message_type") != "media":
+        return result
+
+    current_url = result.get("image_url")
+    if current_url and not is_blocked_image_url(current_url):
+        # Already a valid URL — nothing to do.
+        return result
+
+    # LLM gave no URL or a blocked placeholder — try hits metadata.
+    real_urls = _images_from_hits(hits)
+    if real_urls:
+        fixed = dict(result)
+        fixed["image_url"] = real_urls[0]
+        log.info(
+            "MEDIA_FIX | replaced blocked/missing image_url=%r with hit url=%r",
+            current_url, real_urls[0],
+        )
+        return fixed
+
+    # No real image available — downgrade to text so router doesn't send a broken URL.
+    log.warning(
+        "MEDIA_FIX | no real image URL available for media response — downgrading to text. "
+        "blocked_url=%r",
+        current_url,
+    )
+    fallback = dict(result)
+    fallback["message_type"] = "text"
+    fallback["image_url"]    = None
+    return fallback
 
 
 @app.route("/webhook", methods=["POST"])
@@ -208,8 +273,18 @@ def webhook():
                 # 3. WhatsApp constraint validation
                 result = validate_whatsapp_response(result)
 
-                # 4. Hallucination validation
-                allowed_entities = set(AUTHORIZED_BRANDS)
+                # 4. Resolve media image URL — strip hallucinated placeholder URLs and
+                #    substitute a real image from hits metadata. Downgrades to text when
+                #    no real image is available so a fake URL never reaches WhatsApp.
+                result = _resolve_media_image_url(result, hits)
+
+                # 5. Hallucination validation
+                # allowed_entities supplements AUTHORIZED_BRANDS (already populated at
+                # startup with all brand + product names). The hit-derived tokens here
+                # provide a per-request safety net for any product names the LLM used
+                # that are grounded in the retrieved chunks but not yet in the global set
+                # (e.g. if the catalogue was updated after startup).
+                allowed_entities = _hit_entity_tokens(hits)
                 vr = validate_response(
                     content=result["content"],
                     user_query=user_message,
