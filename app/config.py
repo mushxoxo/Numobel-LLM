@@ -46,3 +46,11 @@ QNA_COLLECTION      = "numobel_approved_qna"
 # ─── WhatsApp templates ───────────────────────────────────────────────────────
 
 CAROUSEL_TEMPLATE = "numobel_catalogue_4"
+
+# ─── Intent classifier ────────────────────────────────────────────────────────
+
+INTENT_CONFIDENCE_THRESHOLD = 0.75   # cosine similarity → confirmed intent; per D-12 / INTENT-03
+INTENT_TENTATIVE_THRESHOLD  = 0.60   # cosine similarity → tentative; per D-09 / INTENT-06
+QNA_OVERRIDE_THRESHOLD      = 0.15   # ChromaDB cosine DISTANCE → return verbatim; per D-11 / INTENT-05
+INTENT_SHORT_MSG_TOKENS     = 15     # word-count threshold for multi-turn inherit; per D-09 / INTENT-06
+EXEMPLARS_PATH              = BASE_DIR / "app" / "intent_exemplars.json"   # exemplar phrases for centroid classifier

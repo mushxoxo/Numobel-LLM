@@ -1,0 +1,63 @@
+{
+  "greeting": [
+    "hi", "hello", "hey", "good morning", "good evening", "namaste",
+    "hii", "helo", "heyy", "hi there", "hey there", "howdy",
+    "good afternoon", "greetings", "yo", "sup", "wassup",
+    "hai", "haii", "hlo", "hlw"
+  ],
+  "brand_discovery": [
+    "what brands do you carry", "which brands do you have", "what brands",
+    "tell me about your brands", "show me all brands", "list your brands",
+    "what products do you sell", "what do you sell", "what do you offer",
+    "what are your products", "what is numobel", "tell me about numobel",
+    "wt brands do u hv", "which brands are available", "all brands please",
+    "show all", "what categories do you have", "what collections"
+  ],
+  "brand_deep_dive": [
+    "tell me about rubio monocoat", "what is nuacoustics", "about nutoy",
+    "tell me about nupanel", "what is nuwork", "rubio monocoat products",
+    "nuacoustics range", "nutoy collection", "nupanel overview",
+    "more about rubio", "rubio monocoat details", "nutoy info",
+    "what does nuwork do", "nuacoustics acoustic panels", "nupanel wall panels"
+  ],
+  "product_line_query": [
+    "show me nutoy stackers", "wooden stacking toys", "acoustic panel options",
+    "what wall panels do you have", "rubio monocoat wood oil", "hardwax oil products",
+    "nuwork products", "nupanel products", "show me acoustic panels",
+    "wooden toys for kids", "montessori toys", "what colors are available",
+    "show me product line", "what variants do you have", "product range"
+  ],
+  "specific_product": [
+    "price of rubio monocoat pure", "how much does nutoy stacker cost",
+    "show me the image of nuacoustics panel", "what is the price of nupanel",
+    "nuwork price", "rubio monocoat pure 350ml price", "nutoy rainbow stacker",
+    "show photo of", "show picture of", "image of the product",
+    "how much is it", "what does it cost", "price please",
+    "hw much", "price?", "cost?"
+  ],
+  "general_qna": [
+    "how do I apply rubio monocoat", "is it safe for children",
+    "how to install acoustic panels", "what is the coverage of rubio monocoat",
+    "are these panels fire resistant", "how to clean wood with rubio",
+    "installation guide", "what surfaces work with rubio",
+    "is it eco friendly", "voc free", "does it work on hardwood",
+    "application tips", "how many coats do I need", "maintenance tips",
+    "how long does it last", "can I use it on furniture",
+    "is it waterproof", "which finish is best for floors"
+  ],
+  "out_of_scope": [
+    "where is my order", "track my shipment", "I want to return this",
+    "refund please", "delivery date", "when will it arrive",
+    "shipping cost", "order status", "cancel my order", "exchange product",
+    "complaint", "damaged product", "wrong item received",
+    "customer care number", "where to buy", "nearest store",
+    "distributor", "dealer", "warranty claim"
+  ],
+  "chitchat": [
+    "how are you", "what is your name", "who are you", "are you a bot",
+    "what can you do", "are you human", "tell me a joke", "what is the weather",
+    "kaise ho", "aap kaun ho", "bot hai kya", "thanks", "thank you",
+    "ok", "okay", "got it", "nice", "cool", "great", "awesome",
+    "no thanks", "not interested", "bye", "goodbye"
+  ]
+}
