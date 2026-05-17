@@ -15,3 +15,6 @@ media/
 *.lock
 training/qna_pairs/pending.jsonl
 .planning/
+*.db
+*.db-shm
+*.db-wal
