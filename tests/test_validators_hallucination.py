@@ -202,3 +202,64 @@ def test_hyphenated_product_no_false_positive():
         "Rabbit is a real Nutoy product token — must not be flagged. "
         f"violations={result.violations}"
     )
+
+
+# ─── Bug 2 regression: context fallback uses product_name metadata key ────────
+
+def test_context_fallback_uses_product_name_key():
+    """Bug 2 regression: _build_context_fallback must use 'product_name' (ChromaDB metadata key).
+
+    ChromaDB product chunks store the product name under 'product_name', not 'name'.
+    Before the fix, _build_context_fallback looked for 'name' and found nothing,
+    then fell back to the generic out-of-scope message even when hits were present.
+    """
+    initialize_validator(ALL_BRANDS)
+    # Simulate the hit metadata shape that ChromaDB returns for product chunks
+    hits = [{"metadata": {"product_name": "Nutoy Stacker Rainbow", "brand": "Nutoy"}}]
+    result = validate_response(
+        content="Rubio Monocoat Both products are available from Asian Paints",
+        user_query="stacker rainbow",
+        allowed_entities=set(),
+        response_plan={"message_type": "media"},
+        context_data={"history": [], "hits": hits},
+    )
+    assert result.valid is False
+    # The fallback must use the product info from the hit, NOT the generic out-of-scope message
+    assert "Nutoy Stacker Rainbow" in result.fallback_content, (
+        "Bug 2 regression: context fallback did not use product_name from hit metadata. "
+        f"Got fallback_content={result.fallback_content!r}"
+    )
+    assert "Could you ask about one of our brands" not in result.fallback_content, (
+        "Bug 2 regression: context fallback fell through to generic message — "
+        "product_name key was not found in hit metadata."
+    )
+
+
+def test_context_fallback_brand_only_when_no_product_name():
+    """Context fallback uses brand-only sentence when hit has brand but no product_name."""
+    initialize_validator(ALL_BRANDS)
+    hits = [{"metadata": {"brand": "Nutoy"}}]  # no product_name field
+    result = validate_response(
+        content="Rubio Monocoat Both products are available from Asian Paints",
+        user_query="nutoy",
+        allowed_entities=set(),
+        response_plan={"message_type": "text"},
+        context_data={"history": [], "hits": hits},
+    )
+    assert result.valid is False
+    assert "Nutoy" in result.fallback_content
+    assert "Could you ask about one of our brands" not in result.fallback_content
+
+
+def test_context_fallback_generic_when_hits_empty():
+    """Context fallback uses generic message when hits list is empty."""
+    initialize_validator(ALL_BRANDS)
+    result = validate_response(
+        content="Rubio Monocoat is similar to Asian Paints",
+        user_query="rubio",
+        allowed_entities=set(),
+        response_plan={"message_type": "text"},
+        context_data={"history": [], "hits": []},
+    )
+    assert result.valid is False
+    assert "Could you ask about one of our brands" in result.fallback_content

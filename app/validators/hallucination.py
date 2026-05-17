@@ -107,13 +107,21 @@ def _build_generic_fallback() -> str:
 
 
 def _build_context_fallback(context_data: dict) -> str:
+    """Build a factual fallback from the top retrieved hit.
+
+    ChromaDB product chunks store the product name under 'product_name' (not 'name').
+    Falls back to the generic out-of-scope message only when no usable metadata is found.
+    """
     hits = context_data.get("hits", [])
     if hits:
         meta  = hits[0].get("metadata", {})
-        name  = meta.get("name")
+        # ChromaDB product metadata uses 'product_name'; approved QnA chunks use 'name'
+        name  = meta.get("product_name") or meta.get("name")
         brand = meta.get("brand")
         if name and brand:
             return f"{name} is a {brand} product offered by Numobel."
+        if brand:
+            return f"This is a {brand} product offered by Numobel."
     return _build_generic_fallback()
 
 

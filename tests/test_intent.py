@@ -22,9 +22,19 @@ def reset_intent_state(monkeypatch):
     import app.intent as intent_module
     monkeypatch.setattr(intent_module, "_centroids", {})
     monkeypatch.setattr(intent_module, "_intent_ready", False)
+    monkeypatch.setattr(intent_module, "_entity_index_ready", False)
+    monkeypatch.setattr(intent_module, "_entity_brand_names", frozenset())
+    monkeypatch.setattr(intent_module, "_entity_brand_tokens", frozenset())
+    monkeypatch.setattr(intent_module, "_entity_product_line_names", frozenset())
+    monkeypatch.setattr(intent_module, "_entity_product_tokens", frozenset())
     yield
     monkeypatch.setattr(intent_module, "_centroids", {})
     monkeypatch.setattr(intent_module, "_intent_ready", False)
+    monkeypatch.setattr(intent_module, "_entity_index_ready", False)
+    monkeypatch.setattr(intent_module, "_entity_brand_names", frozenset())
+    monkeypatch.setattr(intent_module, "_entity_brand_tokens", frozenset())
+    monkeypatch.setattr(intent_module, "_entity_product_line_names", frozenset())
+    monkeypatch.setattr(intent_module, "_entity_product_tokens", frozenset())
 
 
 def test_classify_intent_returns_required_keys_INTENT01():
@@ -581,4 +591,327 @@ def test_vague_prior_does_not_inherit_over_specific_best_INTENT12(monkeypatch):
 
     # brand_deep_dive is best (not vague) and prior is vague — embedding wins, no inherit
     assert result["intent"] == IntentEnum.BRAND_DEEP_DIVE
+    assert result["layer"] == "embedding"
+
+
+# ─── INTENT-13: Layer 1.5 catalog entity pre-pass ────────────────────────────
+
+def _load_sample_entity_index(monkeypatch):
+    """Helper: load a representative entity index into the intent module."""
+    import app.intent as intent_module
+    from app.intent import load_entity_index
+    brands        = ["Rubio Monocoat", "Nuacoustics", "Nutoy", "Nupanel", "Nuwork"]
+    product_lines = [
+        "On Wheels", "Stacker", "Montessori", "Building Block",
+        "Board Games", "Balancing", "Learning", "Furniture",
+        "MDF Perforated", "Open Work Panel", "Panelsys",
+        "PET Ceiling", "PET Light", "PET Plain", "PET VG",
+        "Components", "Storage",
+    ]
+    product_names = [
+        "Nutoy-On Wheels-Duck", "Nutoy-On Wheels-Rabbit", "Nutoy-On Wheels-Swan-Black",
+        "Nutoy-Stacker-Rainbow", "Nutoy-Montessori-Cylinder",
+    ]
+    load_entity_index(brands, product_lines, product_names)
+    assert intent_module._entity_index_ready is True
+
+
+def test_entity_index_loaded_INTENT13(monkeypatch):
+    """INTENT-13: load_entity_index populates index and sets _entity_index_ready=True."""
+    import app.intent as intent_module
+    _load_sample_entity_index(monkeypatch)
+    assert intent_module._entity_index_ready is True
+    assert "on wheels" in intent_module._entity_product_line_names
+    assert "stacker" in intent_module._entity_product_line_names
+    assert "duck" in intent_module._entity_product_tokens
+
+
+def test_product_line_query_via_catalog_entity_INTENT13(monkeypatch):
+    """INTENT-13: Exact product line name 'on wheels' → product_line_query, layer=catalog_entity."""
+    from app.intent import classify_intent, IntentEnum
+    _load_sample_entity_index(monkeypatch)
+    result = classify_intent("on wheels")
+    assert result["intent"] == IntentEnum.PRODUCT_LINE_QUERY
+    assert result["layer"] == "catalog_entity"
+    assert result["confidence"] == 1.0
+
+
+def test_product_line_query_case_insensitive_INTENT13(monkeypatch):
+    """INTENT-13: Product line match is case-insensitive."""
+    from app.intent import classify_intent, IntentEnum
+    _load_sample_entity_index(monkeypatch)
+    for query in ("On Wheels", "ON WHEELS", "on wheels", "Stacker", "STACKER"):
+        result = classify_intent(query)
+        assert result["layer"] == "catalog_entity", (
+            f"Query {query!r} did not hit catalog_entity layer. Got {result}"
+        )
+
+
+def test_product_line_query_with_trailing_punctuation_INTENT13(monkeypatch):
+    """INTENT-13: Product line name with trailing punctuation still matches."""
+    from app.intent import classify_intent, IntentEnum
+    _load_sample_entity_index(monkeypatch)
+    result = classify_intent("on wheels?")
+    assert result["intent"] == IntentEnum.PRODUCT_LINE_QUERY
+    assert result["layer"] == "catalog_entity"
+
+
+def test_specific_product_via_token_match_INTENT13(monkeypatch):
+    """INTENT-13: Query containing a known product token → specific_product, layer=catalog_entity."""
+    from app.intent import classify_intent, IntentEnum
+    _load_sample_entity_index(monkeypatch)
+    # 'duck' is a token from 'Nutoy-On Wheels-Duck' (len >= 4)
+    result = classify_intent("duck toy")
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "catalog_entity"
+    assert result["confidence"] == 1.0
+
+
+def test_specific_product_short_query_INTENT13(monkeypatch):
+    """INTENT-13: Short query 'duck' alone → specific_product via token match."""
+    from app.intent import classify_intent, IntentEnum
+    _load_sample_entity_index(monkeypatch)
+    result = classify_intent("duck")
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "catalog_entity"
+
+
+def test_specific_product_image_request_INTENT13(monkeypatch):
+    """INTENT-13: 'image pls' without entity tokens does NOT trigger catalog_entity.
+
+    This query has no token >= 4 chars that matches the product index,
+    so Layer 1.5 must NOT fire. The query reaches Layer 2 (or fallback).
+    """
+    from app.intent import classify_intent, IntentEnum
+    _load_sample_entity_index(monkeypatch)
+    # 'image' is not a product token; 'pls' < 4 chars
+    result = classify_intent("image pls")
+    assert result["layer"] != "catalog_entity"
+
+
+def test_entity_index_disabled_without_load_INTENT13():
+    """INTENT-13: Layer 1.5 is silently skipped when entity index not loaded (_entity_index_ready=False)."""
+    from app.intent import classify_intent, IntentEnum
+    # autouse fixture ensures _entity_index_ready=False
+    # 'duck' would match if the index were loaded, but must fall through without it
+    result = classify_intent("duck")
+    # Should degrade to fallback (no centroids), not catalog_entity
+    assert result["layer"] != "catalog_entity"
+    assert result["intent"] == IntentEnum.GENERAL_QNA
+
+
+def test_layer1_fires_before_entity_index_INTENT13(monkeypatch):
+    """INTENT-13: Layer 1 (greeting) takes priority over entity index."""
+    from app.intent import classify_intent, IntentEnum
+    _load_sample_entity_index(monkeypatch)
+    # 'hi' matches Layer 1 greeting — must NOT reach Layer 1.5
+    result = classify_intent("hi")
+    assert result["intent"] == IntentEnum.GREETING
+    assert result["layer"] == "rule"
+
+
+def test_load_entity_index_graceful_on_empty_INTENT13(monkeypatch):
+    """INTENT-13: load_entity_index with empty lists sets index ready with empty sets."""
+    import app.intent as intent_module
+    from app.intent import load_entity_index
+    load_entity_index([], [], [])
+    assert intent_module._entity_index_ready is True
+    assert len(intent_module._entity_brand_names) == 0
+    assert len(intent_module._entity_product_line_names) == 0
+    assert len(intent_module._entity_product_tokens) == 0
+
+
+def test_short_noise_tokens_not_matched_INTENT13(monkeypatch):
+    """INTENT-13: Tokens shorter than _PRODUCT_TOKEN_MIN_LEN (4) are not indexed."""
+    import app.intent as intent_module
+    from app.intent import load_entity_index
+    # 'On' (2), 'a' (1) would be noise — only 'Duck' (4) should be indexed
+    load_entity_index([], [], ["On Wheels-Duck"])
+    # 'on' has len=2 < 4, 'duck' has len=4 — only 'duck' and 'wheels' should be in index
+    # (both are >= 4 chars)
+    assert "duck" in intent_module._entity_product_tokens
+    assert "wheels" in intent_module._entity_product_tokens
+    # 'on' should NOT be in the token index
+    assert "on" not in intent_module._entity_product_tokens
+
+
+# ─── Bug 1 regression: brand name queries via Layer 1.5 ──────────────────────
+
+def test_brand_query_in_sentence_not_specific_product_INTENT15(monkeypatch):
+    """INTENT-15 regression: 'what is rubio monocoat' must NOT classify as specific_product.
+
+    Layer 1 fullmatch doesn't fire (sentence has extra words). Layer 1.5 must detect
+    that 'rubio'+'monocoat' are brand tokens (not product model tokens) and return
+    brand_deep_dive, not specific_product.
+    """
+    from app.intent import classify_intent, load_entity_index, IntentEnum
+    load_entity_index(
+        brands=["Rubio Monocoat", "Nuacoustics", "Nutoy", "Nupanel", "Nuwork"],
+        product_lines=["On Wheels", "Stacker"],
+        product_names=["Rubio Monocoat-Pure", "Rubio Monocoat-Oil Plus 2C"],
+    )
+    result = classify_intent("what is rubio monocoat")
+    assert result["intent"] == IntentEnum.BRAND_DEEP_DIVE, (
+        "INTENT-15 regression: brand name sentence wrongly classified as specific_product. "
+        f"Got intent={result['intent'].value} layer={result['layer']}"
+    )
+    assert result["layer"] == "catalog_entity"
+
+
+def test_brand_query_tell_me_about_INTENT15(monkeypatch):
+    """INTENT-15: 'tell me about nuacoustics' → brand_deep_dive via Layer 1.5."""
+    from app.intent import classify_intent, load_entity_index, IntentEnum
+    load_entity_index(
+        brands=["Rubio Monocoat", "Nuacoustics", "Nutoy", "Nupanel", "Nuwork"],
+        product_lines=["PET Ceiling", "MDF Perforated"],
+        product_names=["Nuacoustics-PET Ceiling-White", "Nuacoustics-PET Plain-Grey"],
+    )
+    result = classify_intent("tell me about nuacoustics")
+    assert result["intent"] == IntentEnum.BRAND_DEEP_DIVE
+    assert result["layer"] == "catalog_entity"
+
+
+def test_mixed_brand_and_product_token_stays_specific_product_INTENT15(monkeypatch):
+    """INTENT-15: When query contains both brand tokens AND product-model tokens,
+    specific_product wins (not all matched tokens are brand tokens).
+
+    'rubio monocoat pure' matches 'rubio'+'monocoat' (brand tokens) AND 'pure'
+    (product model token). Since not ALL matched tokens are brand tokens, it is
+    a specific product query.
+    """
+    from app.intent import classify_intent, load_entity_index, IntentEnum
+    load_entity_index(
+        brands=["Rubio Monocoat", "Nutoy"],
+        product_lines=["Stacker"],
+        product_names=["Rubio Monocoat-Pure", "Rubio Monocoat-Oil Plus 2C"],
+    )
+    # 'pure' is a product model token; 'rubio'+'monocoat' are brand tokens.
+    # Since 'pure' is NOT a brand token, NOT all matched tokens are brand tokens.
+    result = classify_intent("rubio monocoat pure")
+    # Layer 1 fullmatch doesn't fire (3 words including 'pure')
+    # Layer 1.5 step 3 fires; matched_tokens = {rubio, monocoat, pure}
+    # 'pure' is not a brand token → specific_product
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "catalog_entity"
+
+
+def test_brand_token_index_populated_by_load_entity_index_INTENT15(monkeypatch):
+    """INTENT-15: load_entity_index populates _entity_brand_tokens from brand names."""
+    import app.intent as intent_module
+    from app.intent import load_entity_index
+    load_entity_index(
+        brands=["Rubio Monocoat", "Nutoy"],
+        product_lines=[],
+        product_names=[],
+    )
+    assert "rubio" in intent_module._entity_brand_tokens
+    assert "monocoat" in intent_module._entity_brand_tokens
+    assert "nutoy" in intent_module._entity_brand_tokens
+
+
+# ─── Bug 3 regression: context-anchored follow-up queries ────────────────────
+
+def test_what_colors_after_specific_product_anchors_to_general_qna_INTENT14(monkeypatch):
+    """INTENT-14 regression: 'what colors do you have' after specific_product → general_qna.
+
+    The embedding for 'what colors do you have' scores highest for brand_discovery (~0.785).
+    With a specific_product prior in context, the strong context-anchor rule must override
+    and return general_qna (anchored to the prior product context).
+    """
+    import app.intent as intent_module
+    from app.intent import classify_intent, IntentEnum
+
+    # brand_discovery centroid scores above CONFIDENCE_THRESHOLD with SAMPLE_EMBEDDING
+    # to simulate the observed 0.785 score
+    brand_discovery_centroid = np.array([0.25] * 400 + [0.0] * 624)  # will score ~0.79
+
+    monkeypatch.setattr(intent_module, "_intent_ready", True)
+    monkeypatch.setattr(intent_module, "_centroids", {
+        "brand_discovery": brand_discovery_centroid,
+    })
+
+    history = [{"role": "user", "content": "stacker rainbow", "intent": "specific_product"}]
+
+    result = classify_intent(
+        "what colors do you have",  # 5 words, brand_discovery at high confidence
+        embedding=SAMPLE_EMBEDDING,
+        history=history,
+    )
+
+    assert result["intent"] == IntentEnum.GENERAL_QNA, (
+        "INTENT-14 regression: brand_discovery overrode specific_product context for follow-up. "
+        f"Got intent={result['intent'].value} layer={result['layer']}"
+    )
+    assert result["layer"] == "embedding_inherit"
+
+
+def test_what_sizes_after_product_line_query_anchors_to_general_qna_INTENT14(monkeypatch):
+    """INTENT-14: 'what sizes do you have' after product_line_query → general_qna."""
+    import app.intent as intent_module
+    from app.intent import classify_intent, IntentEnum
+
+    brand_discovery_centroid = np.array([0.25] * 400 + [0.0] * 624)
+
+    monkeypatch.setattr(intent_module, "_intent_ready", True)
+    monkeypatch.setattr(intent_module, "_centroids", {
+        "brand_discovery": brand_discovery_centroid,
+    })
+
+    history = [{"role": "user", "content": "acoustic panels", "intent": "product_line_query"}]
+
+    result = classify_intent(
+        "what sizes do you have",
+        embedding=SAMPLE_EMBEDDING,
+        history=history,
+    )
+
+    assert result["intent"] == IntentEnum.GENERAL_QNA
+    assert result["layer"] == "embedding_inherit"
+
+
+def test_what_colors_without_product_prior_stays_brand_discovery_INTENT14(monkeypatch):
+    """INTENT-14: 'what colors do you have' with NO prior → brand_discovery (no override)."""
+    import app.intent as intent_module
+    from app.intent import classify_intent, IntentEnum
+
+    brand_discovery_centroid = np.array([0.25] * 400 + [0.0] * 624)
+
+    monkeypatch.setattr(intent_module, "_intent_ready", True)
+    monkeypatch.setattr(intent_module, "_centroids", {
+        "brand_discovery": brand_discovery_centroid,
+    })
+
+    result = classify_intent(
+        "what colors do you have",
+        embedding=SAMPLE_EMBEDDING,
+        history=[],
+    )
+
+    # No prior product context — brand_discovery stands
+    assert result["intent"] == IntentEnum.BRAND_DISCOVERY
+    assert result["layer"] == "embedding"
+
+
+def test_what_colors_after_non_inheritable_prior_stays_brand_discovery_INTENT14(monkeypatch):
+    """INTENT-14: brand_discovery is NOT overridden when prior is greeting (non-inheritable)."""
+    import app.intent as intent_module
+    from app.intent import classify_intent, IntentEnum
+
+    brand_discovery_centroid = np.array([0.25] * 400 + [0.0] * 624)
+
+    monkeypatch.setattr(intent_module, "_intent_ready", True)
+    monkeypatch.setattr(intent_module, "_centroids", {
+        "brand_discovery": brand_discovery_centroid,
+    })
+
+    history = [{"role": "user", "content": "hi", "intent": "greeting"}]
+
+    result = classify_intent(
+        "what colors do you have",
+        embedding=SAMPLE_EMBEDDING,
+        history=history,
+    )
+
+    # Greeting prior is non-inheritable — brand_discovery stands
+    assert result["intent"] == IntentEnum.BRAND_DISCOVERY
     assert result["layer"] == "embedding"

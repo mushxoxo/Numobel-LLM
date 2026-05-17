@@ -5,10 +5,13 @@ Public API:
   - IntentEnum: 8-value enum of message intents
   - classify_intent(text, embedding=None, history=None) -> dict
   - compute_centroids() -> None  (called by startup orchestrator)
+  - load_entity_index(brands, product_lines, product_names) -> None  (called by startup)
 
 No LLM calls, no ChromaDB queries — pure in-memory classification.
-Layer 1: compiled regex rules (greeting, OOS, chitchat, brand names) — no embedding needed.
-Layer 2: cosine similarity against per-intent centroid embeddings.
+Layer 1:   compiled regex rules (greeting, OOS, chitchat, brand names) — no embedding needed.
+Layer 1.5: deterministic catalog entity pre-pass — checks query tokens against known brands,
+           product line names, and product name tokens loaded from SQLite at startup.
+Layer 2:   cosine similarity against per-intent centroid embeddings.
 """
 
 import json
@@ -29,6 +32,18 @@ log = get_logger()
 # Module-level classifier state
 _centroids: dict[str, np.ndarray] = {}
 _intent_ready: bool = False
+
+# ─── Layer 1.5 entity index ───────────────────────────────────────────────────
+# Populated at startup by load_entity_index(). Each set contains lowercased values.
+_entity_brand_names:        frozenset[str] = frozenset()
+_entity_brand_tokens:       frozenset[str] = frozenset()  # individual tokens from brand names
+_entity_product_line_names: frozenset[str] = frozenset()
+_entity_product_tokens:     frozenset[str] = frozenset()
+_entity_index_ready: bool = False
+
+# Minimum character length for a token to be used in product-token matching.
+# Prevents short noise words ("a", "is", "in") from triggering false positives.
+_PRODUCT_TOKEN_MIN_LEN = 4
 
 
 class IntentEnum(str, Enum):
@@ -55,6 +70,17 @@ _NON_INHERITABLE: frozenset[IntentEnum] = frozenset({
 # more-specific prior instead of accepting the vague match.  (INTENT-11 / Bug 1 fix)
 _VAGUE_PRODUCT_INTENTS: frozenset[IntentEnum] = frozenset({
     IntentEnum.BRAND_DISCOVERY,
+    IntentEnum.GENERAL_QNA,
+})
+
+# Specific product intents — when the embedding returns a vague intent (brand_discovery)
+# even at high confidence, a more-specific prior should override on short follow-up queries.
+# This handles context-anchored follow-ups like "what colors do you have" after a product
+# discussion, which embed close to brand_discovery but are actually about the prior product.
+_SPECIFIC_PRODUCT_INTENTS: frozenset[IntentEnum] = frozenset({
+    IntentEnum.BRAND_DEEP_DIVE,
+    IntentEnum.PRODUCT_LINE_QUERY,
+    IntentEnum.SPECIFIC_PRODUCT,
     IntentEnum.GENERAL_QNA,
 })
 
@@ -127,6 +153,64 @@ def _layer1_classify(text: str) -> "dict | None":
     return None
 
 
+def _layer1_5_classify(text: str) -> "dict | None":
+    """Layer 1.5: deterministic catalog entity pre-pass.
+
+    Checks query tokens against the entity index loaded from SQLite at startup.
+    Returns result dict or None if no catalog entity is matched.
+
+    Resolution order (most-specific first):
+      1. Full phrase match against product line names → product_line_query
+      2. Full phrase match against brand names (multi-word, e.g. 'rubio monocoat') → brand_deep_dive
+         Note: single-word brand names are already caught by Layer 1 _BRAND_NAME_RE.
+      3. Any query token (len >= _PRODUCT_TOKEN_MIN_LEN) found in product token index:
+         3a. If ALL matched tokens are brand name tokens → brand_deep_dive
+             (e.g. "what is rubio monocoat" matches "rubio"+"monocoat" — all brand tokens)
+         3b. Otherwise → specific_product
+
+    Skipped silently when entity index has not been populated (e.g., during tests that
+    do not call load_entity_index — entity_index_ready stays False).
+    """
+    if not _entity_index_ready:
+        return None
+
+    t_lower = text.strip().lower()
+    # Strip trailing punctuation for cleaner phrase matching
+    t_clean = re.sub(r"[!?.]+$", "", t_lower).strip()
+
+    # 1. Product line name full-phrase match (e.g. "on wheels", "building block")
+    if t_clean in _entity_product_line_names:
+        return {"intent": IntentEnum.PRODUCT_LINE_QUERY, "confidence": 1.0, "layer": "catalog_entity"}
+
+    # 2. Brand name full-phrase match for multi-word brands not caught by Layer 1 regex
+    if t_clean in _entity_brand_names:
+        return {"intent": IntentEnum.BRAND_DEEP_DIVE, "confidence": 1.0, "layer": "catalog_entity"}
+
+    # 3. Product token overlap — any meaningful token in query found in product index
+    query_tokens = {
+        tok for tok in re.split(r"[\s\-_/]+", t_clean)
+        if len(tok) >= _PRODUCT_TOKEN_MIN_LEN
+    }
+    matched_tokens = query_tokens & _entity_product_tokens
+    if matched_tokens:
+        log.debug(
+            "INTENT | layer1_5 matched product tokens=%s in query=%r",
+            matched_tokens, text[:80],
+        )
+        # 3a. If ALL matched tokens are brand name tokens, this is a brand query, not a
+        # specific product query.  Example: "what is rubio monocoat" matches "rubio" and
+        # "monocoat" — both are brand tokens, not product-line or model tokens.
+        if matched_tokens <= _entity_brand_tokens:
+            log.debug(
+                "INTENT | layer1_5 all matched tokens are brand tokens=%s — brand_deep_dive",
+                matched_tokens,
+            )
+            return {"intent": IntentEnum.BRAND_DEEP_DIVE, "confidence": 1.0, "layer": "catalog_entity"}
+        return {"intent": IntentEnum.SPECIFIC_PRODUCT, "confidence": 1.0, "layer": "catalog_entity"}
+
+    return None
+
+
 def _layer2_classify(
     embedding: list[float],
     history: "list[dict] | None",
@@ -134,8 +218,8 @@ def _layer2_classify(
 ) -> dict:
     """Layer 2: cosine centroid classification with optional multi-turn inherit.
 
-    Inherit rule (INTENT-06 / INTENT-09 / INTENT-10 / INTENT-11):
-      Inherit is applied only when ALL of the following hold:
+    Inherit rule (INTENT-06 / INTENT-09 / INTENT-10 / INTENT-11 / INTENT-14):
+      Standard inherit (tentative band only) — applied when ALL hold:
         1. best_sim is tentative (TENTATIVE_THRESHOLD ≤ best_sim < CONFIDENCE_THRESHOLD)
         2. word_count < INTENT_SHORT_MSG_TOKENS  (short, ambiguous message)
         3. prior is inheritable (not in _NON_INHERITABLE)
@@ -145,8 +229,14 @@ def _layer2_classify(
            c. best_intent is a vague product intent (brand_discovery / general_qna) AND
               prior is NOT a vague product intent — more-specific prior wins.
 
-      Condition 4b/4c is the INTENT-10/11 fix: a more-specific prior (brand_deep_dive) must
-      not lose to a vague tentative match (brand_discovery, general_qna).
+      Strong context-anchor inherit (INTENT-14) — applied even at high confidence when:
+        1. best_intent is brand_discovery  (a vague high-confidence match)
+        2. prior is a specific product intent (brand_deep_dive / product_line_query /
+           specific_product / general_qna)
+        3. word_count < INTENT_SHORT_MSG_TOKENS  (short contextual follow-up)
+        This handles queries like "what colors do you have" / "what sizes do you have"
+        after a product discussion — they embed as brand_discovery but are clearly
+        context-anchored follow-ups that should stay as general_qna for the prior product.
     """
     vec = np.array(embedding, dtype=float)
     best_intent = IntentEnum.GENERAL_QNA
@@ -170,6 +260,41 @@ def _layer2_classify(
     # Only inherit product-relevant priors. Greeting / chitchat / out-of-scope carry
     # no product context and must never override a tentative product embedding match.
     inheritable_prior = prior if (prior and prior not in _NON_INHERITABLE) else None
+
+    # INTENT-14: Strong context-anchor — brand_discovery at ANY confidence level should
+    # yield to a more-specific product prior on short queries.  A user asking "what colors
+    # do you have" after discussing a specific product is clearly asking about that product,
+    # not requesting a brand list.
+    _is_brand_discovery_best  = best_intent == IntentEnum.BRAND_DISCOVERY
+    _prior_is_product_specific = (
+        inheritable_prior is not None
+        and inheritable_prior in _SPECIFIC_PRODUCT_INTENTS
+    )
+    if (
+        _is_brand_discovery_best
+        and _prior_is_product_specific
+        and word_count < INTENT_SHORT_MSG_TOKENS
+    ):
+        # Anchor to general_qna — keep the user in a product conversation rather than
+        # sending them back to the top-level brand list.
+        anchored = IntentEnum.GENERAL_QNA
+        result = {"intent": anchored, "confidence": best_sim, "layer": "embedding_inherit"}
+        fallback_reason = (
+            f"brand_discovery_anchor(words={word_count},prior={inheritable_prior.value})"
+        )
+        log.info(
+            "INTENT_DEBUG | query=%r best=%s confidence=%.3f layer=%s "
+            "fallback_reason=%s prior=%s word_count=%d scores=%s",
+            text[:80],
+            result["intent"].value,
+            result["confidence"],
+            result["layer"],
+            fallback_reason,
+            prior.value if prior else None,
+            word_count,
+            {k: round(v, 3) for k, v in sorted(all_scores.items(), key=lambda x: -x[1])},
+        )
+        return result
 
     if best_sim >= INTENT_CONFIDENCE_THRESHOLD:
         result = {"intent": best_intent, "confidence": best_sim, "layer": "embedding"}
@@ -236,6 +361,11 @@ def classify_intent(
     - embedding: pre-computed (pass from webhook to avoid a second Ollama call)
     - history: for INTENT-06 multi-turn inherit check
     No LLM calls, no ChromaDB queries — pure in-memory classification.
+
+    Classification order:
+      Layer 1   — compiled regex rules (greeting, OOS, chitchat, standalone brand names)
+      Layer 1.5 — deterministic catalog entity pre-pass (product lines, brand phrases, product tokens)
+      Layer 2   — cosine similarity against per-intent centroid embeddings
     """
     layer1 = _layer1_classify(text)
     if layer1 is not None:
@@ -244,6 +374,14 @@ def classify_intent(
             text[:80], layer1["intent"].value,
         )
         return layer1
+
+    layer1_5 = _layer1_5_classify(text)
+    if layer1_5 is not None:
+        log.info(
+            "INTENT_DEBUG | query=%r layer=catalog_entity intent=%s confidence=1.0",
+            text[:80], layer1_5["intent"].value,
+        )
+        return layer1_5
 
     if not _intent_ready:
         log.warning(
@@ -258,6 +396,64 @@ def classify_intent(
         return {"intent": IntentEnum.GENERAL_QNA, "confidence": 0.0, "layer": "fallback_no_embedding"}
 
     return _layer2_classify(embedding, history, text)
+
+
+def load_entity_index(
+    brands: "list[str]",
+    product_lines: "list[str]",
+    product_names: "list[str]",
+) -> None:
+    """Populate the catalog entity index for Layer 1.5 classification.
+
+    Called by the startup orchestrator (step 1.5) after SQLite sync completes.
+    Non-fatal on failure — _entity_index_ready stays False and Layer 1.5 is skipped.
+
+    Args:
+        brands:        Brand name strings (e.g. ['Rubio Monocoat', 'Nutoy', ...])
+        product_lines: Product line name strings (e.g. ['On Wheels', 'Stacker', ...])
+        product_names: Full product name strings (e.g. ['Nutoy-On Wheels-Duck', ...])
+    """
+    global _entity_brand_names, _entity_brand_tokens, _entity_product_line_names
+    global _entity_product_tokens, _entity_index_ready
+    try:
+        brand_set = frozenset(b.lower().strip() for b in brands if b)
+        line_set  = frozenset(pl.lower().strip() for pl in product_lines if pl)
+
+        # Extract individual tokens from brand names for brand-token matching in step 3a.
+        # This lets "what is rubio monocoat" match brand tokens "rubio"+"monocoat" → brand_deep_dive.
+        brand_token_set: set[str] = set()
+        for brand in brands:
+            if not brand:
+                continue
+            for tok in re.split(r"[\s\-_/]+", brand.lower()):
+                if len(tok) >= _PRODUCT_TOKEN_MIN_LEN:
+                    brand_token_set.add(tok)
+
+        # Extract individual tokens from product names for token-level matching.
+        # Split on word boundaries, hyphens, and slashes; filter by minimum length
+        # to avoid noise (e.g. "a", "in", "of").
+        token_set: set[str] = set()
+        for name in product_names:
+            if not name:
+                continue
+            for tok in re.split(r"[\s\-_/]+", name.lower()):
+                if len(tok) >= _PRODUCT_TOKEN_MIN_LEN:
+                    token_set.add(tok)
+
+        _entity_brand_names        = brand_set
+        _entity_brand_tokens       = frozenset(brand_token_set)
+        _entity_product_line_names = line_set
+        _entity_product_tokens     = frozenset(token_set)
+        _entity_index_ready        = True
+
+        log.info(
+            "INTENT | entity index loaded: %d brands, %d brand tokens, "
+            "%d product lines, %d product tokens",
+            len(brand_set), len(brand_token_set), len(line_set), len(token_set),
+        )
+    except Exception:
+        log.warning("INTENT | entity index load failed — Layer 1.5 disabled", exc_info=True)
+        _entity_index_ready = False
 
 
 def compute_centroids() -> None:

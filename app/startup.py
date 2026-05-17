@@ -85,22 +85,27 @@ def _startup_orchestrator() -> None:
             {k: v for k, v in sync_result.items() if k in ("added", "updated", "deleted")},
         )
 
-        # Step 1.5: Build system prompt and initialize hallucination validator.
+        # Step 1.5: Build system prompt, initialize hallucination validator, and
+        # populate the intent classifier's catalog entity index (Layer 1.5).
         # Product names from the catalogue are loaded alongside brand names so the
         # validator does not flag legitimate product-name tokens (e.g. "Waldorf",
         # "Poplar", "Building") as unauthorized entities.
-        log.info("STARTUP | step 1.5/4 - building authorized system prompt + validator init")
+        log.info("STARTUP | step 1.5/4 - building authorized system prompt + validator init + entity index")
         try:
             from app.db import get_db
             import app.rag as _rag
             from app.validators.hallucination import initialize_validator
+            from app.intent import load_entity_index
             db     = get_db()
             rows   = db.execute("SELECT name FROM brands").fetchall()
             brands = [row["name"] for row in rows]
             prod_rows     = db.execute("SELECT name FROM products").fetchall()
             product_names = [row["name"] for row in prod_rows]
+            line_rows     = db.execute("SELECT name FROM product_lines").fetchall()
+            product_lines = [row["name"] for row in line_rows]
             _rag.SYSTEM_PROMPT = _rag.build_system_prompt(brands)
             initialize_validator(brands, product_names)
+            load_entity_index(brands, product_lines, product_names)
             log.info(
                 "STARTUP | system prompt built with %d authorized brands: %s",
                 len(brands), brands,
