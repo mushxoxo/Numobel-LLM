@@ -111,8 +111,11 @@ def _layer2_classify(
     best_intent = IntentEnum.GENERAL_QNA
     best_sim = -1.0
 
+    # Collect all scores for debug logging
+    all_scores: dict[str, float] = {}
     for intent_key, centroid in _centroids.items():
         sim = _cosine_similarity(vec, centroid)
+        all_scores[intent_key] = sim
         if sim > best_sim:
             best_sim = sim
             try:
@@ -120,18 +123,37 @@ def _layer2_classify(
             except ValueError:
                 best_intent = IntentEnum.GENERAL_QNA
 
+    prior = _prior_intent(history or [])
+    word_count = len(text.split())
+
     if best_sim >= INTENT_CONFIDENCE_THRESHOLD:
-        return {"intent": best_intent, "confidence": best_sim, "layer": "embedding"}
+        result = {"intent": best_intent, "confidence": best_sim, "layer": "embedding"}
+        fallback_reason = None
+    elif best_sim >= INTENT_TENTATIVE_THRESHOLD:
+        if word_count < INTENT_SHORT_MSG_TOKENS and prior:
+            result = {"intent": prior, "confidence": best_sim, "layer": "embedding_inherit"}
+            fallback_reason = f"tentative+short({word_count}w)+inherit_from_{prior.value}"
+        else:
+            result = {"intent": best_intent, "confidence": best_sim, "layer": "embedding"}
+            fallback_reason = f"tentative+no_inherit(words={word_count},prior={prior})"
+    else:
+        result = {"intent": IntentEnum.GENERAL_QNA, "confidence": best_sim, "layer": "embedding"}
+        fallback_reason = f"below_tentative_threshold({INTENT_TENTATIVE_THRESHOLD})"
 
-    if best_sim >= INTENT_TENTATIVE_THRESHOLD:
-        word_count = len(text.split())
-        if word_count < INTENT_SHORT_MSG_TOKENS:
-            prior = _prior_intent(history or [])
-            if prior:
-                return {"intent": prior, "confidence": best_sim, "layer": "embedding_inherit"}
-        return {"intent": best_intent, "confidence": best_sim, "layer": "embedding"}
+    log.info(
+        "INTENT_DEBUG | query=%r best=%s confidence=%.3f layer=%s "
+        "fallback_reason=%s prior=%s word_count=%d scores=%s",
+        text[:80],
+        result["intent"].value,
+        result["confidence"],
+        result["layer"],
+        fallback_reason,
+        prior.value if prior else None,
+        word_count,
+        {k: round(v, 3) for k, v in sorted(all_scores.items(), key=lambda x: -x[1])},
+    )
 
-    return {"intent": IntentEnum.GENERAL_QNA, "confidence": best_sim, "layer": "embedding"}
+    return result
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -150,9 +172,17 @@ def classify_intent(
     """
     layer1 = _layer1_classify(text)
     if layer1 is not None:
+        log.info(
+            "INTENT_DEBUG | query=%r layer=rule intent=%s confidence=1.0",
+            text[:80], layer1["intent"].value,
+        )
         return layer1
 
     if not _intent_ready:
+        log.warning(
+            "INTENT_DEBUG | query=%r centroids_not_ready — degraded to GENERAL_QNA",
+            text[:80],
+        )
         return {"intent": IntentEnum.GENERAL_QNA, "confidence": 0.0, "layer": "fallback"}
 
     return _layer2_classify(embedding or [], history, text)

@@ -103,9 +103,9 @@ def webhook():
             query_embedding = rag.get_embedding(user_message)
             clf = classify_intent(text=user_message, embedding=query_embedding, history=history)
 
-        log.debug(
-            "req=%s | intent=%s confidence=%.2f layer=%s",
-            req, clf["intent"], clf["confidence"], clf["layer"],
+        log.info(
+            "req=%s | INTENT_DEBUG query=%r rule_intent=%s layer=%s confidence=%.3f",
+            req, user_message[:80], clf["intent"].value, clf["layer"], clf["confidence"],
         )
 
         # Intent-conditional routing
@@ -141,16 +141,12 @@ def webhook():
             }
             hits = []  # Phase 3 will replace with SQLite-driven interactive message
 
-        elif clf["intent"] == IntentEnum.BRAND_DEEP_DIVE:
-            result = {
-                "message_type": "text",
-                "content": "I can tell you about our brands. Which brand are you interested in?",
-                "buttons": None, "image_url": None, "prompt_tokens": 0, "completion_tokens": 0,
-            }
-            hits = []  # Phase 3 will replace with SQLite brand query
-
         else:
-            # PRODUCT_LINE_QUERY, SPECIFIC_PRODUCT, GENERAL_QNA — full RAG with QnA override
+            # BRAND_DEEP_DIVE, PRODUCT_LINE_QUERY, SPECIFIC_PRODUCT, GENERAL_QNA
+            # — full RAG with QnA override.
+            # NOTE: BRAND_DEEP_DIVE intentionally falls through here so brand queries
+            # ("Nuacoustics", "tell me about nutoy") get real product information from
+            # ChromaDB instead of the Phase 3 stub response that caused the fallback loop.
             hits = []
             result = None
 
@@ -176,12 +172,18 @@ def webhook():
                         "prompt_tokens": 0,
                         "completion_tokens": 0,
                     }
+                    log.info("req=%s | INTENT_DEBUG qna_override=true distance=%.4f", req,
+                             qna_results["distances"][0][0])
 
             if result is None:
                 # Full RAG pipeline
                 search_query = rag.rewrite_query(user_message, history)
                 hits = rag.retrieve(collection, search_query)
                 result = rag.generate_answer(search_query, hits, history)
+                log.info(
+                    "req=%s | INTENT_DEBUG qna_override=false search_query=%r hits=%d",
+                    req, search_query[:80], len(hits),
+                )
 
         log.info(
             "req=%s | response type=%s tokens=%d+%d",
