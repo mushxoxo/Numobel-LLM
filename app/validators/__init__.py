@@ -1,4 +1,12 @@
-"""Pre-dispatch validators: whatsapp constraint enforcement; hallucination prevention (extended by plan 03-03)."""
+"""Pre-dispatch validators: whatsapp constraint enforcement; hallucination prevention."""
 from app.validators.whatsapp import validate_whatsapp_response
+from app.validators.response import ValidationResult
+from app.validators.hallucination import validate_response, initialize_validator, AUTHORIZED_BRANDS
 
-# TODO(plan 03-03): append re-exports for validate_response, initialize_validator, ValidationResult
+__all__ = [
+    "validate_whatsapp_response",
+    "validate_response",
+    "initialize_validator",
+    "AUTHORIZED_BRANDS",
+    "ValidationResult",
+]
