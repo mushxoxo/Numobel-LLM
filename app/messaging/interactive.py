@@ -15,7 +15,7 @@ def send_interactive(
 ) -> requests.Response:
     """Send a button interactive message. buttons is a list of up to 3 label strings."""
     if len(buttons) > 3:
-        log.warning("send_interactive | %d buttons provided, truncating to 3", len(buttons))
+        log.warning("SEND_INTERACTIVE | received %d buttons, truncating to 3 — validator should have caught this", len(buttons))
     truncated = [label for label in buttons if len(label) > 20]
     if truncated:
         log.warning("send_interactive | button label(s) truncated to 20 chars: %s", truncated)

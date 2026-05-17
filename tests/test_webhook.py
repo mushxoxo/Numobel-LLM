@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from app.intent import IntentEnum
+from app.validators.response import ValidationResult
 
 
 INCOMING = {
@@ -31,7 +32,10 @@ def client():
         import app.webhook as webhook_module
 
         webhook_module._startup._ready = True
-        with patch("app.webhook.rag.get_collection", return_value=MagicMock()):
+        with patch("app.webhook.rag.get_collection", return_value=MagicMock()), \
+             patch("app.webhook.plan_response", return_value="text"), \
+             patch("app.webhook.validate_whatsapp_response", side_effect=lambda x: x), \
+             patch("app.webhook.validate_response", return_value=ValidationResult(valid=True)):
             app = webhook_module.app
             app.config["TESTING"] = True
             with app.test_client() as c:

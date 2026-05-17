@@ -254,31 +254,43 @@ _CAROUSEL_KEYWORDS = {
     'acoustic', 'panel', 'hardwax',
 }
 
-SYSTEM_PROMPT = textwrap.dedent("""\
-    You are a Numobel product assistant. Only answer using the provided context.
-    If the answer is not in the context, set content to "I don't have that information."
 
-    You MUST respond with ONLY a valid JSON object — no markdown fences, no extra text:
-    {
-      "message_type": "text" | "interactive" | "media" | "carousel",
-      "content": "<your answer here>",
-      "buttons": ["<label1>", "<label2>", "<label3>"] or null,
-      "image_url": "<url>" or null
-    }
+def build_system_prompt(brands: list[str]) -> str:
+    """Build the system prompt with authorized brand list for hallucination prevention."""
+    brand_list = ", ".join(brands)
+    return textwrap.dedent(f"""\
+        You are a Numobel product assistant. Answer product questions using ONLY the context provided.
 
-    MESSAGE TYPE RULES:
-    - "interactive" — use when offering category choices or asking the user to pick an option.
-                      Include up to 3 short button labels in "buttons".
-    - "carousel"    — use when showcasing 2+ products from the same product line.
-    - "media"       — use when the user explicitly asks for an image, photo, or picture.
-    - "text"        — use for all other answers (facts, specs, comparisons, prices).
+        Authorized brands (ONLY mention these): {brand_list}
+        Never mention any other brand name. If asked about other brands, redirect to our brands.
+        If you cannot answer from the context, say: "I don't have information about that"
+        Use the exact product name from the context verbatim — do not paraphrase or invent product names.
 
-    CONTENT RULES:
-    - Use ₹ symbol for all prices.
-    - Bold product names and brands using **name**.
-    - For greetings, introduce Numobel's 5 brands and offer category buttons.
-    - Keep answers concise but complete.
-""")
+        You MUST respond with ONLY a valid JSON object — no markdown fences, no extra text:
+        {{
+          "message_type": "text" | "interactive" | "media" | "carousel",
+          "content": "<your answer here>",
+          "buttons": ["<label1>", "<label2>", "<label3>"] or null,
+          "image_url": "<url>" or null
+        }}
+
+        MESSAGE TYPE RULES:
+        - "interactive" — use when offering category choices or asking the user to pick an option.
+                          Include up to 3 short button labels in "buttons".
+        - "carousel"    — use when showcasing 2+ products from the same product line.
+        - "media"       — use when the user explicitly asks for an image, photo, or picture.
+        - "text"        — use for all other answers (facts, specs, comparisons, prices).
+
+        CONTENT RULES:
+        - Use ₹ symbol for all prices.
+        - Bold product names and brands using **name**.
+        - Keep answers concise but complete.
+    """).strip()
+
+
+SYSTEM_PROMPT = build_system_prompt(
+    ["Rubio Monocoat", "Nuacoustics", "Nutoy", "Nupanel", "Nuwork"]
+)
 
 
 def _keyword_fallback(query: str) -> dict:
@@ -294,12 +306,18 @@ def _keyword_fallback(query: str) -> dict:
 
 
 def generate_answer(query: str, context_chunks: list[dict],
-                    history: list[dict] = None) -> dict:
+                    history: list[dict] = None,
+                    message_type: str | None = None) -> dict:
     """
     Build the RAG prompt and generate a structured answer.
     Returns a dict with: message_type, content, buttons, image_url,
     prompt_tokens, completion_tokens.
+
+    message_type: when provided, the returned result uses this value regardless
+    of LLM output (planner pre-decides format; LLM generates prose only).
     """
+    preset_message_type = message_type
+
     context_parts = []
     for i, chunk in enumerate(context_chunks, 1):
         meta = chunk['metadata']
@@ -337,19 +355,27 @@ def generate_answer(query: str, context_chunks: list[dict],
         if cleaned.startswith('```'):
             cleaned = re.sub(r'^```[a-z]*\n?', '', cleaned).rstrip('`').strip()
         parsed = json.loads(cleaned)
-        message_type = parsed.get('message_type', 'text')
+        message_type = (
+            preset_message_type
+            if preset_message_type is not None
+            else parsed.get('message_type', 'text')
+        )
         content      = parsed.get('content', '')
         buttons      = parsed.get('buttons') or None
         image_url    = parsed.get('image_url') or None
         log.debug("STRUCTURED | type=%s buttons=%s", message_type, buttons)
     except (json.JSONDecodeError, ValueError):
         log.warning("LLM returned non-JSON — using keyword fallback. Raw: %s", raw[:120])
-        fallback     = _keyword_fallback(query)
-        message_type = fallback['message_type']
+        if preset_message_type is not None:
+            message_type = preset_message_type
+            buttons      = None
+        else:
+            fallback     = _keyword_fallback(query)
+            message_type = fallback['message_type']
+            buttons      = fallback['buttons']
         m = re.search(r'"content"\s*:\s*"([^"]*)"', raw)
-        content      = m.group(1) if m else "Sorry, I couldn't process that. Please try again."
-        buttons      = fallback['buttons']
-        image_url    = None
+        content   = m.group(1) if m else "Sorry, I couldn't process that. Please try again."
+        image_url = None
 
     # Faithful-replay override: when the top hit is an approved training pair and the LLM
     # agrees on message_type, copy structural fields verbatim from metadata.

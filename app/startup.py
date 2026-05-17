@@ -85,6 +85,26 @@ def _startup_orchestrator() -> None:
             {k: v for k, v in sync_result.items() if k in ("added", "updated", "deleted")},
         )
 
+        # Step 1.5: Build system prompt and initialize hallucination validator
+        log.info("STARTUP | step 1.5/4 - building authorized system prompt + validator init")
+        try:
+            from app.db import get_db
+            import app.rag as _rag
+            from app.validators.hallucination import initialize_validator
+            rows   = get_db().execute("SELECT name FROM brands").fetchall()
+            brands = [row["name"] for row in rows]
+            _rag.SYSTEM_PROMPT = _rag.build_system_prompt(brands)
+            initialize_validator(brands)
+            log.info(
+                "STARTUP | system prompt built with %d authorized brands: %s",
+                len(brands), brands,
+            )
+        except Exception:
+            log.warning(
+                "STARTUP | step 1.5 failed — system prompt and validator may use defaults",
+                exc_info=True,
+            )
+
         log.info("STARTUP | step 2/4 - ChromaDB product ingest into %s", PRODUCTS_COLLECTION)
         from app.rag import get_collection, ingest_data
 

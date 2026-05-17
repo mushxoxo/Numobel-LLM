@@ -13,6 +13,8 @@ from app.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, PRODUCTS_COLLECTION, 
 from app.intent import classify_intent, IntentEnum
 from app.log import get_logger
 from app.router import dispatch
+from app.planner import plan_response
+from app.validators import validate_whatsapp_response, validate_response, AUTHORIZED_BRANDS
 from app.history import load_history, save_history
 from app.admin import is_admin, needs_admin_handling, handle_admin
 from app.startup import run_startup
@@ -179,11 +181,48 @@ def webhook():
                 # Full RAG pipeline
                 search_query = rag.rewrite_query(user_message, history)
                 hits = rag.retrieve(collection, search_query)
-                result = rag.generate_answer(search_query, hits, history)
                 log.info(
                     "req=%s | INTENT_DEBUG qna_override=false search_query=%r hits=%d",
                     req, search_query[:80], len(hits),
                 )
+
+                # Compute data shape for planner
+                image_available = any(
+                    h.get("metadata", {}).get("image_url") or h.get("metadata", {}).get("images")
+                    for h in hits
+                )
+                product_count = len(hits)
+                button_count  = min(product_count, 5)
+                data_shape = {
+                    "button_count":    button_count,
+                    "image_available": image_available,
+                    "product_count":   product_count,
+                }
+
+                # 1. Deterministic format planning
+                planned_type = plan_response(clf["intent"], data_shape)
+
+                # 2. LLM generation with planned message type
+                result = rag.generate_answer(search_query, hits, history, message_type=planned_type)
+
+                # 3. WhatsApp constraint validation
+                result = validate_whatsapp_response(result)
+
+                # 4. Hallucination validation
+                allowed_entities = set(AUTHORIZED_BRANDS)
+                vr = validate_response(
+                    content=result["content"],
+                    user_query=user_message,
+                    allowed_entities=allowed_entities,
+                    response_plan={"message_type": result["message_type"]},
+                    context_data={"history": history, "hits": hits},
+                )
+                if not vr.valid:
+                    log.warning(
+                        "req=%s | HALLUCINATION | severity=%s violations=%s strategy=%s",
+                        req, vr.severity, vr.violations, vr.recovery_strategy,
+                    )
+                    result["content"] = vr.fallback_content
 
         log.info(
             "req=%s | response type=%s tokens=%d+%d",
