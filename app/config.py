@@ -28,9 +28,21 @@ APPROVED_PATH = BASE_DIR / "training" / "qna_pairs" / "approved.jsonl"
 
 EMBED_MODEL     = "mxbai-embed-large"
 LLM_MODEL       = "llama3.2"
-COLLECTION_NAME = "numobel_products"
 CHUNK_MAX_CHARS = 2400   # ~600 tokens
 CHUNK_OVERLAP   = 400    # ~100 tokens overlap
 TOP_K           = 5      # chunks retrieved per query
 MEMORY_LIMIT    = 5      # conversation turns kept in context
 REWRITE_QUERY   = True   # set False to disable query reformulation
+
+# ─── Database ─────────────────────────────────────────────────────────────────
+
+SQLITE_PATH = BASE_DIR / "numobel.db"
+
+# ─── ChromaDB collections ─────────────────────────────────────────────────────
+
+PRODUCTS_COLLECTION = "numobel_products"
+QNA_COLLECTION      = "numobel_approved_qna"
+
+# ─── WhatsApp templates ───────────────────────────────────────────────────────
+
+CAROUSEL_TEMPLATE = "numobel_catalogue_4"

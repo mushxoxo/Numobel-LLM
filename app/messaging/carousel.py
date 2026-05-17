@@ -11,12 +11,12 @@ def send_carousel(
     template_name: str,
     cards: list[dict],
     language: str = "en",
-    body_var: str = "",
+    body_vars: list[str] = None,
 ) -> requests.Response:
     """
     Send a carousel template message.
     Each card dict: {"media_url": str, "media_type": "IMAGE"|"VIDEO", "button_type": [...]}
-    body_var maps to field_1 in the template.
+    body_vars maps to field_1, field_2, … in the template.
     """
     payload = {
         "phone_number":       phone,
@@ -24,8 +24,9 @@ def send_carousel(
         "template_language":  language,
         "carousel_templates": cards,
     }
-    if body_var:
-        payload["field_1"] = body_var
+    for i, var in enumerate(body_vars or [], 1):
+        if var:
+            payload[f"field_{i}"] = var
 
     resp = wa2mation_post("send-carousel-template-message", payload)
     if resp.status_code != 200:

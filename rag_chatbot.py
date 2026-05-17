@@ -8,7 +8,8 @@ Preserves backward compatibility for:
 """
 
 from app.config import (
-    DATA_FILE, CHROMA_DIR, EMBED_MODEL, LLM_MODEL, COLLECTION_NAME,
+    DATA_FILE, CHROMA_DIR, EMBED_MODEL, LLM_MODEL,
+    PRODUCTS_COLLECTION, QNA_COLLECTION,
     CHUNK_MAX_CHARS, CHUNK_OVERLAP, TOP_K, MEMORY_LIMIT, REWRITE_QUERY,
 )
 from app.rag import (
@@ -28,7 +29,8 @@ from app.rag import (
 )
 
 __all__ = [
-    "DATA_FILE", "CHROMA_DIR", "EMBED_MODEL", "LLM_MODEL", "COLLECTION_NAME",
+    "DATA_FILE", "CHROMA_DIR", "EMBED_MODEL", "LLM_MODEL",
+    "PRODUCTS_COLLECTION", "QNA_COLLECTION",
     "CHUNK_MAX_CHARS", "CHUNK_OVERLAP", "TOP_K", "MEMORY_LIMIT", "REWRITE_QUERY",
     "get_collection", "ingest_data", "product_to_text", "chunk_text", "stable_id",
     "get_embedding", "rewrite_query", "retrieve", "generate_answer",

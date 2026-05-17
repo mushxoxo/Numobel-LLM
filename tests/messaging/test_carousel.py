@@ -22,33 +22,45 @@ def mock_post():
 
 def test_send_carousel_correct_endpoint(mock_post):
     from app.messaging.carousel import send_carousel
-    send_carousel("919999999999", "nutoy_stacker", CARDS)
+    send_carousel("919999999999", "numobel_catalogue_4", CARDS)
     assert mock_post.call_args[0][0] == "send-carousel-template-message"
 
 
 def test_send_carousel_required_fields(mock_post):
     from app.messaging.carousel import send_carousel
-    send_carousel("919999999999", "nutoy_stacker", CARDS, language="en")
+    send_carousel("919999999999", "numobel_catalogue_4", CARDS, language="en")
     payload = mock_post.call_args[0][1]
     assert payload["phone_number"] == "919999999999"
-    assert payload["template_name"] == "nutoy_stacker"
+    assert payload["template_name"] == "numobel_catalogue_4"
     assert payload["template_language"] == "en"
     assert payload["carousel_templates"] == CARDS
 
 
-def test_send_carousel_body_var_as_field_1(mock_post):
+def test_send_carousel_body_vars_as_field_1_and_field_2(mock_post):
     from app.messaging.carousel import send_carousel
-    send_carousel("919999999999", "nutoy_stacker", CARDS, body_var="Nutoy Stackers")
-    assert mock_post.call_args[0][1]["field_1"] == "Nutoy Stackers"
+    send_carousel("919999999999", "numobel_catalogue_4", CARDS, body_vars=["Nutoy Stackers", "Handcrafted wooden toys"])
+    payload = mock_post.call_args[0][1]
+    assert payload["field_1"] == "Nutoy Stackers"
+    assert payload["field_2"] == "Handcrafted wooden toys"
 
 
-def test_send_carousel_field_1_omitted_when_no_body_var(mock_post):
+def test_send_carousel_single_body_var(mock_post):
     from app.messaging.carousel import send_carousel
-    send_carousel("919999999999", "nutoy_stacker", CARDS)
-    assert "field_1" not in mock_post.call_args[0][1]
+    send_carousel("919999999999", "numobel_catalogue_4", CARDS, body_vars=["Nutoy Stackers"])
+    payload = mock_post.call_args[0][1]
+    assert payload["field_1"] == "Nutoy Stackers"
+    assert "field_2" not in payload
+
+
+def test_send_carousel_fields_omitted_when_no_body_vars(mock_post):
+    from app.messaging.carousel import send_carousel
+    send_carousel("919999999999", "numobel_catalogue_4", CARDS)
+    payload = mock_post.call_args[0][1]
+    assert "field_1" not in payload
+    assert "field_2" not in payload
 
 
 def test_send_carousel_default_language_is_en(mock_post):
     from app.messaging.carousel import send_carousel
-    send_carousel("919999999999", "nutoy_stacker", CARDS)
+    send_carousel("919999999999", "numobel_catalogue_4", CARDS)
     assert mock_post.call_args[0][1]["template_language"] == "en"

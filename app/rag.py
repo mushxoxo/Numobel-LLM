@@ -15,7 +15,8 @@ import chromadb
 import ollama
 
 from app.config import (
-    DATA_FILE, CHROMA_DIR, EMBED_MODEL, LLM_MODEL, COLLECTION_NAME,
+    DATA_FILE, CHROMA_DIR, EMBED_MODEL, LLM_MODEL,
+    PRODUCTS_COLLECTION, QNA_COLLECTION,
     CHUNK_MAX_CHARS, CHUNK_OVERLAP, TOP_K, MEMORY_LIMIT, REWRITE_QUERY,
 )
 from app.log import get_logger
@@ -25,11 +26,11 @@ log = get_logger()
 
 # ─── ChromaDB ─────────────────────────────────────────────────────────────────
 
-def get_collection() -> chromadb.Collection:
-    """Return the ChromaDB collection, creating it if needed."""
+def get_collection(name: str = PRODUCTS_COLLECTION) -> chromadb.Collection:
+    """Return the named ChromaDB collection, creating it if needed."""
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
     return client.get_or_create_collection(
-        name=COLLECTION_NAME,
+        name=name,
         metadata={"hnsw:space": "cosine"},
     )
 
@@ -137,6 +138,7 @@ def ingest_data(collection) -> int:
     log.info("INGEST | loaded %d products", len(products))
 
     all_ids, all_documents, all_metadatas = [], [], []
+    per_product_chunk_ids: dict[str, list[str]] = {}
 
     for product in products:
         text = product_to_text(product)
@@ -149,9 +151,12 @@ def ingest_data(collection) -> int:
         images_list  = (product.get('media') or {}).get('images', [])
         images_str   = '|'.join(images_list) if images_list else ''
         product_link = (product.get('metadata') or {}).get('product_link') or ''
+        product_ids = []
 
         for j, chunk in enumerate(chunks):
-            all_ids.append(stable_id(chunk, j))
+            doc_id = stable_id(chunk, j)
+            product_ids.append(doc_id)
+            all_ids.append(doc_id)
             all_documents.append(chunk)
             all_metadatas.append({
                 'brand':        brand,
@@ -162,6 +167,7 @@ def ingest_data(collection) -> int:
                 'images':       images_str,
                 'product_link': product_link,
             })
+        per_product_chunk_ids[name] = product_ids
 
     log.info("INGEST | embedding %d chunks ...", len(all_documents))
     all_embeddings = []
@@ -184,6 +190,10 @@ def ingest_data(collection) -> int:
         embeddings=all_embeddings,
         metadatas=all_metadatas,
     )
+    from app.db import set_chroma_chunk_ids
+
+    for product_name, chunk_ids in per_product_chunk_ids.items():
+        set_chroma_chunk_ids(product_name, chunk_ids)
     log.info("INGEST | complete — %d chunks stored", len(all_ids))
     return len(all_ids)
 
@@ -403,15 +413,15 @@ def ingest_qna_pair(pair: dict, collection) -> str:
 
 def main():
     force_ingest = '--ingest' in sys.argv
-    collection = get_collection()
+    collection = get_collection(PRODUCTS_COLLECTION)
 
     current_count = collection.count()
     if current_count == 0 or force_ingest:
         if force_ingest and current_count > 0:
             client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-            client.delete_collection(COLLECTION_NAME)
+            client.delete_collection(PRODUCTS_COLLECTION)
             collection = client.get_or_create_collection(
-                name=COLLECTION_NAME,
+                name=PRODUCTS_COLLECTION,
                 metadata={"hnsw:space": "cosine"},
             )
         ingest_data(collection)

@@ -169,6 +169,23 @@ def append_approved(pair: dict) -> None:
         f.write(json.dumps(pair, ensure_ascii=False) + '\n')
 
 
+def load_jsonl(path: Path) -> list[dict]:
+    """Load JSONL records from a path, skipping blank and malformed lines."""
+    if not path.exists():
+        return []
+    records = []
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return records
+
+
 def load_style_examples(limit: int = 3) -> list[dict]:
     """Load up to limit diverse approved pairs as style examples."""
     if not _APPROVED_PATH.exists():

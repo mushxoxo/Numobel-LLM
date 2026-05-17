@@ -85,17 +85,33 @@ def test_dispatch_carousel_sends_with_two_images():
         dispatch(PHONE, _result("carousel", "Nutoy Stackers"), hits=hits)
         mock.assert_called_once()
         kwargs = mock.call_args[1]
-        assert kwargs["template_name"] == "nutoy_stacker"
+        assert kwargs["template_name"] == "numobel_catalogue_4"
         assert len(kwargs["cards"]) == 2
         assert kwargs["cards"][0]["media_url"] == "https://example.com/img1.jpg"
 
 
+def test_dispatch_carousel_uses_config_template():
+    """INFRA-09: router uses CAROUSEL_TEMPLATE from app.config."""
+    from app.config import CAROUSEL_TEMPLATE
+
+    hits = [_hit("|".join(f"https://example.com/img{i}.jpg" for i in range(4)))]
+    with patch("app.router.send_carousel") as mock:
+        from app.router import dispatch
+
+        dispatch(PHONE, _result("carousel", "Browse our products"), hits=hits)
+    assert mock.called, "send_carousel was not called"
+    kwargs = mock.call_args.kwargs
+    assert kwargs["template_name"] == CAROUSEL_TEMPLATE
+    assert kwargs["template_name"] == "numobel_catalogue_4"
+
+
 def test_dispatch_carousel_caps_at_max_cards():
-    hits = [_hit("https://example.com/1.jpg|https://example.com/2.jpg|https://example.com/3.jpg")]
+    five_imgs = "|".join(f"https://example.com/{i}.jpg" for i in range(1, 6))
+    hits = [_hit(five_imgs)]
     with patch("app.router.send_carousel") as mock:
         from app.router import dispatch
         dispatch(PHONE, _result("carousel"), hits=hits)
-        assert len(mock.call_args[1]["cards"]) == 2
+        assert len(mock.call_args[1]["cards"]) == 4
 
 
 def test_dispatch_carousel_falls_back_to_text_when_fewer_than_2_images():
@@ -117,13 +133,24 @@ def test_dispatch_carousel_falls_back_to_text_when_no_hits():
         mock_carousel.assert_not_called()
 
 
-def test_dispatch_carousel_body_var_truncated_to_60_chars():
+def test_dispatch_carousel_body_vars_truncated_to_60_chars():
     hits = [_hit("https://example.com/img1.jpg|https://example.com/img2.jpg")]
     long_content = "A" * 100
     with patch("app.router.send_carousel") as mock:
         from app.router import dispatch
         dispatch(PHONE, _result("carousel", long_content), hits=hits)
-        assert len(mock.call_args[1]["body_var"]) == 60
+        assert len(mock.call_args[1]["body_vars"][0]) == 60
+
+
+def test_dispatch_carousel_body_vars_split_on_newline():
+    hits = [_hit("https://example.com/img1.jpg|https://example.com/img2.jpg")]
+    content = "Nutoy Stackers\nHandcrafted wooden toys"
+    with patch("app.router.send_carousel") as mock:
+        from app.router import dispatch
+        dispatch(PHONE, _result("carousel", content), hits=hits)
+        kwargs = mock.call_args[1]
+        assert kwargs["body_vars"][0] == "Nutoy Stackers"
+        assert kwargs["body_vars"][1] == "Handcrafted wooden toys"
 
 
 # ─── _images_from_hits ────────────────────────────────────────────────────────

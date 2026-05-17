@@ -174,7 +174,7 @@ def _send_preview(phone: str, pair: dict):
         send_text(
             phone,
             "(Carousel preview not supported in admin chat — "
-            "saved pair will use the nutoy_stacker template at runtime.)"
+            "saved pair will use the numobel_catalogue_4 template at runtime.)"
         )
     else:
         send_text(phone, pair.get('answer', ''))

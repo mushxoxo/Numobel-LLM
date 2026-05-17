@@ -1,11 +1,10 @@
+from app.config import CAROUSEL_TEMPLATE
 from app.log import get_logger
 from app.messaging import send_text, send_media, send_interactive, send_carousel
 
 log = get_logger()
 
-# Only approved carousel template. Expand as more are approved.
-_CAROUSEL_TEMPLATE  = "nutoy_stacker"
-_CAROUSEL_MAX_CARDS = 2  # nutoy_stacker supports exactly 2 cards
+_CAROUSEL_MAX_CARDS = 4  # numobel_catalogue_4 supports up to 4 cards
 
 
 def _images_from_hits(hits: list[dict]) -> list[str]:
@@ -62,11 +61,13 @@ def dispatch(phone: str, result: dict, hits: list[dict] = None) -> None:
                     {"media_type": "IMAGE", "media_url": img, "button_type": ["QUICK_REPLY", "URL"]}
                     for img in images[:_CAROUSEL_MAX_CARDS]
                 ]
+                parts = (content or "").split("\n", 1)
+                body_vars = [p.strip()[:60] for p in parts if p.strip()]
                 send_carousel(
                     phone,
-                    template_name=_CAROUSEL_TEMPLATE,
+                    template_name=CAROUSEL_TEMPLATE,
                     cards=cards,
-                    body_var=(content[:60] if content else ""),
+                    body_vars=body_vars,
                 )
             else:
                 log.warning("DISPATCH | carousel needs 2+ images, only %d found — falling back to text", len(images))

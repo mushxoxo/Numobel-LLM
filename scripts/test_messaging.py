@@ -13,7 +13,7 @@ stacker_imgs = [
     p["media"]["images"][0]
     for p in products
     if "stacker" in p.get("name", "").lower() and p.get("media", {}).get("images")
-][:2]
+][:4]
 
 
 def check(label, resp):
@@ -51,7 +51,7 @@ cards = [
     {"media_type": "IMAGE", "media_url": img, "button_type": ["QUICK_REPLY", "URL"]}
     for img in stacker_imgs
 ]
-r = send_carousel(PHONE, template_name="nutoy_stacker", cards=cards, language="en", body_var="Test 4/4 — Carousel")
+r = send_carousel(PHONE, template_name="numobel_catalogue_4", cards=cards, language="en", body_vars=["Nutoy Stackers", "Handcrafted wooden toys for curious minds"])
 check("send_carousel", r)
 
 print("\nAll 4 message types sent successfully.")
