@@ -54,3 +54,33 @@ INTENT_TENTATIVE_THRESHOLD  = 0.60   # cosine similarity → tentative; per D-09
 QNA_OVERRIDE_THRESHOLD      = 0.15   # ChromaDB cosine DISTANCE → return verbatim; per D-11 / INTENT-05
 INTENT_SHORT_MSG_TOKENS     = 15     # word-count threshold for multi-turn inherit; per D-09 / INTENT-06
 EXEMPLARS_PATH              = BASE_DIR / "app" / "intent_exemplars.json"   # exemplar phrases for centroid classifier
+
+# ─── WhatsApp message limits ──────────────────────────────────────────────────
+
+WA_TEXT_MAX_CHARS                  = 4096
+WA_INTERACTIVE_BODY_MAX_CHARS      = 1024
+WA_CAROUSEL_CARD_BODY_MAX_CHARS    = 160
+WA_INTERACTIVE_MAX_BUTTONS         = 3
+WA_BUTTON_LABEL_MAX_CHARS          = 20
+
+# ─── Hallucination validator patterns ────────────────────────────────────────
+
+HALLUCINATION_SEVERE_PATTERNS = [
+    "we also offer",
+    "we carry",
+    "our product",
+    "we sell",
+    "available from us",
+    "in our catalogue",
+    "in our catalog",
+]
+
+HALLUCINATION_RECOVERABLE_PATTERNS = [
+    "similar to",
+    r"\blike\b",
+    "compared to",
+    "as opposed to",
+    "unlike",
+    "whereas",
+    "in comparison",
+]

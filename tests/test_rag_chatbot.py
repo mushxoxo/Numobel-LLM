@@ -128,3 +128,58 @@ def test_ingest_qna_pair_document_contains_qa():
     doc = mock_collection.upsert.call_args[1]['documents'][0]
     assert 'Q?' in doc
     assert 'A.' in doc
+
+
+# ─── build_system_prompt + generate_answer (Phase 3 stubs) ───────────────────
+
+import app.rag as rag
+
+
+def test_build_system_prompt():
+    fn = getattr(rag, "build_system_prompt", None)
+    if fn is None:
+        pytest.skip("build_system_prompt not yet implemented")
+    result = fn(["Nuacoustics", "Nupanel", "Nutoy", "Nuwork", "Rubio Monocoat"])
+    assert "Nuacoustics" in result
+    assert "Nupanel" in result
+    assert "Nutoy" in result
+    assert "Nuwork" in result
+    assert "Rubio Monocoat" in result
+    assert "Never mention any other brand name" in result
+    assert "Authorized brands" in result
+
+
+def test_build_system_prompt_uncertainty():
+    fn = getattr(rag, "build_system_prompt", None)
+    if fn is None:
+        pytest.skip("build_system_prompt not yet implemented")
+    result = fn(["Nuacoustics", "Nupanel", "Nutoy", "Nuwork", "Rubio Monocoat"])
+    assert "I don't have information about that" in result
+
+
+def test_generate_answer_respects_message_type(mocker):
+    mocker.patch(
+        "app.rag.ollama.chat",
+        return_value={"message": {"content": '{"content":"hello","buttons":null,"image_url":null}'}},
+    )
+    result = rag.generate_answer(query="x", context_chunks=[], history=None, message_type="media")
+    assert result["message_type"] == "media"
+
+
+def test_product_name_in_context(mocker):
+    captured = {}
+
+    def fake_chat(**kwargs):
+        captured["messages"] = kwargs.get("messages", [])
+        return {"message": {"content": '{"content":"test","buttons":null,"image_url":null}'}}
+
+    mocker.patch("app.rag.ollama.chat", side_effect=fake_chat)
+    rag.generate_answer(
+        query="tell me about rainbow stacker",
+        context_chunks=[{"text": "Nutoy Rainbow Stacker is a wooden toy", "metadata": {"name": "Rainbow Stacker", "brand": "Nutoy"}}],
+        history=None,
+    )
+    all_content = " ".join(m.get("content", "") for m in captured.get("messages", []))
+    assert "Rainbow Stacker" in all_content
+    system_msgs = [m.get("content", "") for m in captured.get("messages", []) if m.get("role") == "system"]
+    assert any("Use the exact product name from the context verbatim" in s for s in system_msgs)
