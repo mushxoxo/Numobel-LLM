@@ -217,8 +217,34 @@ def rewrite_query(query: str, history: list[dict]) -> str:
         - Resolve pronouns and references (it, they, that) using the history.
         - Do NOT inject or assume brand names, product names, or product lines
           unless the user explicitly mentioned them in the follow-up question.
-        - If the follow-up introduces a new topic (e.g. kids, toys, outdoor),
-          form the standalone question around that new topic only.
+        - LINK/URL ANCHOR RULE: ONLY applies when the user's message explicitly
+          contains words like "link", "url", "website", "share the link",
+          "send link", "where can I buy", "where to buy", "how to order", or
+          "pls share". Do NOT apply this rule to product discovery phrases like
+          "i want X", "i need X", "do you have X", "show me X", "what are X".
+          When the rule DOES apply, the standalone question MUST anchor to the
+          most recently discussed product and ask for its purchase URL or product page.
+          Example: prior topic = acoustic panels; follow-up = "can you share link?"
+          → standalone = "Where can I purchase Numobel acoustic panels? What is
+          the product page URL?"
+          Example: prior topic = Rubio Monocoat Oil; follow-up = "pls share website"
+          → standalone = "Where can I buy Rubio Monocoat Oil? What is the
+          product page or website URL?"
+          Counter-example: follow-up = "i want acoustic panels"
+          → this is product discovery, NOT a link request → standalone =
+          "What acoustic panel products does Numobel offer?"
+        - Do NOT carry over category or domain nouns from the prior conversation
+          (e.g. "ceiling", "acoustic", "floor", "panel", "wood") into the
+          standalone question unless the user explicitly repeated that topic.
+          Exception: the LINK/URL ANCHOR RULE above takes priority — for link
+          requests, DO carry over the most recent product context.
+        - When the user introduces a clearly new subject area (e.g. kids, toys,
+          outdoor, pets, home office), scope the standalone question to ONLY that
+          new subject. Do not blend it with any product type, category, or theme
+          from prior turns.
+          Example: prior topic = ceiling decorations; follow-up = "what do you
+          have for my kids?" → standalone = "What products do you have for kids?"
+          NOT "What options do you have for kids' ceiling decorations?"
 
         Chat History:
         {history_str}

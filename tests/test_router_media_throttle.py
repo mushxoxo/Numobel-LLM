@@ -331,3 +331,191 @@ def test_non_purchase_text_does_not_get_link_appended():
         assert product_url not in sent, (
             f"Product link must not be appended to non-purchase text. Got: {sent!r}"
         )
+
+
+# ─── Bug 2 regression: time-based TTL prevents stale-turn throttling ──────────
+
+def test_media_not_throttled_when_sent_at_is_beyond_ttl():
+    """Bug 2 regression: media sent >5 minutes ago must NOT throttle a fresh request.
+
+    Scenario: Cloud-Hexagon image shown at 15:25. User switches topic at 15:41
+    (16 minutes later). The matching turn is within the last-4 window but its
+    sent_at exceeds _MEDIA_THROTTLE_TTL_SECONDS (300 s). Throttle must NOT fire.
+    """
+    import datetime
+    old_ts = (datetime.datetime.now() - datetime.timedelta(minutes=16)).isoformat(timespec="seconds")
+    history = [
+        {"role": "user", "content": "tell me about ceiling decorations"},
+        {"role": "assistant", "content": "Here is Cloud-Hexagon",
+         "image_url": "https://static.wixstatic.com/hexagon.jpg",
+         "product_name": "Numobel Acoustics-PET Ceiling Cloud-Hexagon",
+         "sent_at": old_ts},
+    ]
+    with patch("app.router.load_history", return_value=history),          patch("app.router.send_media") as mock_media,          patch("app.router.send_text") as mock_text:
+        from app.router import dispatch
+        hits = [_hit(
+            "https://static.wixstatic.com/hexagon.jpg",
+            product_name="Numobel Acoustics-PET Ceiling Cloud-Hexagon",
+        )]
+        dispatch(
+            PHONE,
+            _result(image_url="https://static.wixstatic.com/hexagon.jpg"),
+            hits=hits,
+        )
+        mock_media.assert_called_once(), (
+            "Bug 2 regression: throttle must not fire for turns older than the TTL"
+        )
+        mock_text.assert_not_called()
+
+
+def test_media_throttled_when_sent_at_is_within_ttl():
+    """Throttle MUST fire when the matching turn is within the TTL window."""
+    import datetime
+    recent_ts = (datetime.datetime.now() - datetime.timedelta(minutes=2)).isoformat(timespec="seconds")
+    history = [
+        {"role": "user", "content": "show ceiling panel"},
+        {"role": "assistant", "content": "Here is the panel",
+         "image_url": "https://static.wixstatic.com/hexagon.jpg",
+         "product_name": "Numobel Acoustics-PET Ceiling Cloud-Hexagon",
+         "sent_at": recent_ts},
+    ]
+    with patch("app.router.load_history", return_value=history),          patch("app.router.send_media") as mock_media,          patch("app.router.send_text") as mock_text:
+        from app.router import dispatch
+        hits = [_hit(
+            "https://static.wixstatic.com/hexagon.jpg",
+            product_name="Numobel Acoustics-PET Ceiling Cloud-Hexagon",
+        )]
+        dispatch(
+            PHONE,
+            _result(image_url="https://static.wixstatic.com/hexagon.jpg"),
+            hits=hits,
+        )
+        mock_text.assert_called_once()
+        mock_media.assert_not_called()
+
+
+def test_media_throttle_missing_sent_at_falls_back_to_turn_window():
+    """Turns without sent_at (old sessions) fall back to turn-window check only."""
+    # No sent_at field — backward compat: throttle fires on matching URL.
+    history = [
+        {"role": "assistant", "content": "prior",
+         "image_url": "https://example.com/a.jpg",
+         "product_name": "MDF Perforated"},
+        # no sent_at
+    ]
+    with patch("app.router.load_history", return_value=history),          patch("app.router.send_media") as mock_media,          patch("app.router.send_text") as mock_text:
+        from app.router import dispatch
+        hits = [_hit("https://example.com/a.jpg", product_name="MDF Perforated")]
+        dispatch(PHONE, _result(image_url="https://example.com/a.jpg"), hits=hits)
+        mock_text.assert_called_once()
+        mock_media.assert_not_called()
+
+
+# ─── Bug 1 regression: product link injected into normal media caption ──────────
+
+def test_media_caption_gets_product_link_on_purchase_intent():
+    """Bug 1 regression: non-throttled media path must append product_link to caption
+    when response content contains purchase/link intent keywords.
+
+    Previously, only the throttled-downgrade path and the text path injected the link.
+    The normal send_media call silently dropped it.
+    """
+    product_url = "https://www.numobel.in/product-page/numobelacoustics-mdf-1"
+    content = "You can find our Numobel Acoustics products on our official website."
+    with patch("app.router.load_history", return_value=[]), \
+         patch("app.router.send_media") as mock_media, \
+         patch("app.router.send_text") as mock_text:
+        from app.router import dispatch
+        hits = [_hit(
+            "https://static.wixstatic.com/mdf.jpg",
+            product_name="Numobel acoustics-MDF Perforated",
+            product_link=product_url,
+        )]
+        dispatch(
+            PHONE,
+            _result(image_url="https://static.wixstatic.com/mdf.jpg", content=content),
+            hits=hits,
+        )
+        mock_media.assert_called_once()
+        mock_text.assert_not_called()
+        _, kwargs = mock_media.call_args
+        caption = kwargs.get("caption", mock_media.call_args[0][1] if len(mock_media.call_args[0]) > 1 else "")
+        assert product_url in caption, (
+            f"Bug 1 regression: product_link not appended to media caption. Got: {caption!r}"
+        )
+        assert "Buy here:" in caption
+
+
+def test_media_caption_no_link_when_no_purchase_intent():
+    """Media caption must NOT get product link appended when content has no purchase intent."""
+    product_url = "https://www.numobel.in/product-page/numobelacoustics-mdf-1"
+    content = "The MDF Perforated panel absorbs mid to high frequency sound waves."
+    with patch("app.router.load_history", return_value=[]), \
+         patch("app.router.send_media") as mock_media:
+        from app.router import dispatch
+        hits = [_hit(
+            "https://static.wixstatic.com/mdf.jpg",
+            product_name="Numobel acoustics-MDF Perforated",
+            product_link=product_url,
+        )]
+        dispatch(
+            PHONE,
+            _result(image_url="https://static.wixstatic.com/mdf.jpg", content=content),
+            hits=hits,
+        )
+        mock_media.assert_called_once()
+        _, kwargs = mock_media.call_args
+        caption = kwargs.get("caption", mock_media.call_args[0][1] if len(mock_media.call_args[0]) > 1 else "")
+        assert product_url not in caption, (
+            f"Product link must not appear in non-purchase media caption. Got: {caption!r}"
+        )
+
+
+def test_media_caption_no_duplicate_link():
+    """If product_link already appears in content, it must not be appended again."""
+    product_url = "https://www.numobel.in/product-page/numobelacoustics-mdf-1"
+    content = f"Visit our official website at {product_url} for more information."
+    with patch("app.router.load_history", return_value=[]), \
+         patch("app.router.send_media") as mock_media:
+        from app.router import dispatch
+        hits = [_hit(
+            "https://static.wixstatic.com/mdf.jpg",
+            product_name="Numobel acoustics-MDF Perforated",
+            product_link=product_url,
+        )]
+        dispatch(
+            PHONE,
+            _result(image_url="https://static.wixstatic.com/mdf.jpg", content=content),
+            hits=hits,
+        )
+        mock_media.assert_called_once()
+        _, kwargs = mock_media.call_args
+        caption = kwargs.get("caption", mock_media.call_args[0][1] if len(mock_media.call_args[0]) > 1 else "")
+        assert caption.count(product_url) == 1, (
+            f"Product link must not be duplicated in caption. Got: {caption!r}"
+        )
+
+
+def test_media_caption_link_keyword_triggers_injection():
+    """'link' keyword in content triggers product link injection into caption."""
+    product_url = "https://www.numobel.in/product-page/numobelacoustics-mdf-1"
+    content = "Please visit Nupanel for more information. You can find the link below."
+    with patch("app.router.load_history", return_value=[]), \
+         patch("app.router.send_media") as mock_media:
+        from app.router import dispatch
+        hits = [_hit(
+            "https://static.wixstatic.com/mdf.jpg",
+            product_name="Numobel acoustics-MDF Perforated",
+            product_link=product_url,
+        )]
+        dispatch(
+            PHONE,
+            _result(image_url="https://static.wixstatic.com/mdf.jpg", content=content),
+            hits=hits,
+        )
+        mock_media.assert_called_once()
+        _, kwargs = mock_media.call_args
+        caption = kwargs.get("caption", mock_media.call_args[0][1] if len(mock_media.call_args[0]) > 1 else "")
+        assert product_url in caption, (
+            f"Bug 1 regression: 'link' keyword must trigger product_link injection. Got: {caption!r}"
+        )

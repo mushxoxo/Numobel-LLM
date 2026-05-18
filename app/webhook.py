@@ -1,3 +1,4 @@
+import datetime
 import os
 import re
 import time
@@ -322,6 +323,9 @@ def webhook():
                 assistant_entry["image_url"] = url
             if product_name:
                 assistant_entry["product_name"] = product_name
+            # Record wall-clock time so the throttle in router.py can honour
+            # a time-based TTL (not just a turn-window count).
+            assistant_entry["sent_at"] = datetime.datetime.now().isoformat(timespec="seconds")
 
         history.append({"role": "user", "content": user_message, "intent": clf["intent"].value})
         history.append(assistant_entry)

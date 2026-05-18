@@ -1,3 +1,5 @@
+import datetime
+
 from app.config import CAROUSEL_TEMPLATE
 from app.history import load_history
 from app.log import get_logger
@@ -11,11 +13,17 @@ _CAROUSEL_MAX_CARDS = 4  # numobel_catalogue_4 supports up to 4 cards
 # whether the current product image was already sent recently.
 _MEDIA_THROTTLE_WINDOW = 4
 
+# Time-based TTL for media throttling: images shown more than this many seconds
+# ago are NOT throttled, even if they fall within the turn window. Prevents
+# stale sessions from suppressing images on topic switches minutes later.
+_MEDIA_THROTTLE_TTL_SECONDS = 300  # 5 minutes
+
 # Purchase intent keywords — when any of these appear in the text response content,
 # the product link from hit metadata is appended so the user gets a direct buy URL.
 _PURCHASE_KWS = frozenset({
     "buy", "purchase", "order", "where can i get",
     "where to get", "how to buy", "get it",
+    "website", "link", "url", "shop", "store", "official",
 })
 
 
@@ -48,6 +56,19 @@ def _product_link_from_hits(hits: list[dict]) -> str | None:
     return meta.get("product_link") or None
 
 
+def _has_purchase_intent(content: str) -> bool:
+    """Return True when content contains any purchase-intent keyword."""
+    c_lower = (content or "").lower()
+    return any(kw in c_lower for kw in _PURCHASE_KWS)
+
+
+def _append_product_link(content: str, product_link: str | None) -> str:
+    """Append 'Buy here: <url>' to content if product_link is present and not already included."""
+    if product_link and product_link not in (content or ""):
+        return f"{content}\n\nBuy here: {product_link}"
+    return content
+
+
 def _recent_media_already_sent(
     phone: str,
     image_url: str | None,
@@ -55,8 +76,14 @@ def _recent_media_already_sent(
 ) -> bool:
     """Return True when an equivalent media message was sent in the recent window.
 
-    A media is considered equivalent when ANY of the last assistant turns within
-    `_MEDIA_THROTTLE_WINDOW` carries the same image_url OR the same product_name.
+    A media is considered equivalent when ALL of the following are true for a
+    prior assistant turn within `_MEDIA_THROTTLE_WINDOW`:
+      1. It carries the same image_url OR the same product_name.
+      2. Its `sent_at` timestamp is within `_MEDIA_THROTTLE_TTL_SECONDS` of now
+         (turns older than the TTL are skipped — they belong to a different
+         conversational context even if technically within the turn window).
+         Turns that have no `sent_at` field (old sessions) fall back to the
+         turn-window check only (backward compatible).
 
     Loading history via `load_history` is cheap (single JSON read) and gracefully
     returns [] when no session exists, so this is safe to call unconditionally.
@@ -71,8 +98,19 @@ def _recent_media_already_sent(
         log.debug("DISPATCH | history load failed for media throttling — allowing media")
         return False
 
+    now = datetime.datetime.now()
     assistant_turns = [m for m in history if m.get("role") == "assistant"]
     for turn in assistant_turns[-_MEDIA_THROTTLE_WINDOW:]:
+        # Time-based TTL guard: skip turns that are too old to be relevant.
+        sent_at_str = turn.get("sent_at")
+        if sent_at_str:
+            try:
+                sent_at = datetime.datetime.fromisoformat(sent_at_str)
+                if (now - sent_at).total_seconds() > _MEDIA_THROTTLE_TTL_SECONDS:
+                    continue
+            except (ValueError, TypeError):
+                pass  # malformed sent_at — fall through to URL/name check
+
         prior_url     = turn.get("image_url")
         prior_product = turn.get("product_name")
         if image_url and prior_url and prior_url == image_url:
@@ -93,6 +131,11 @@ def dispatch(phone: str, result: dict, hits: list[dict] = None) -> None:
     media response to text so the user is not spammed with the same image for
     every follow-up question about the same product. A switch to a different
     product (different URL / product_name) allows media through again.
+
+    Product link injection: when content contains purchase-intent keywords and
+    the top ChromaDB hit has a product_link, "Buy here: <url>" is appended to
+    the response. This applies to both the normal media caption path and the
+    text path (including throttled media downgrades).
     """
     message_type = result.get("message_type", "text")
     content      = result.get("content", "")
@@ -125,14 +168,26 @@ def dispatch(phone: str, result: dict, hits: list[dict] = None) -> None:
                         product_name, url,
                     )
                     # Preserve product link when throttling suppresses the image
-                    # so explicit "where can I buy" requests still get the URL.
+                    # so explicit "where can I buy" / link requests still get the URL.
                     product_link = _product_link_from_hits(hits)
-                    text_content = content
-                    if product_link and product_link not in (content or ""):
-                        text_content = f"{content}\n\nBuy here: {product_link}"
+                    text_content = _append_product_link(content, product_link)
                     send_text(phone, text_content)
                 else:
-                    send_media(phone, url=url, caption=content)
+                    # Bug 1 fix: inject product link into media caption when the
+                    # response contains purchase-intent keywords (buy, link, website,
+                    # etc.). The throttled path above already did this; the normal
+                    # media path was silently dropping the link.
+                    if hits and _has_purchase_intent(content):
+                        product_link = _product_link_from_hits(hits)
+                        caption = _append_product_link(content, product_link)
+                        log.debug(
+                            "DISPATCH | media caption: purchase intent detected, "
+                            "appending product_link product=%s",
+                            product_name,
+                        )
+                    else:
+                        caption = content
+                    send_media(phone, url=url, caption=caption)
             else:
                 log.warning("DISPATCH | media requested but no image available — falling back to text")
                 send_text(phone, content)
@@ -157,16 +212,13 @@ def dispatch(phone: str, result: dict, hits: list[dict] = None) -> None:
                 send_text(phone, content)
 
         case _:
-            # Bug 2: inject product link for purchase-intent text responses.
-            # This covers the non-throttled path; the throttled media path above has
-            # the same injection logic. Both paths use the same _PURCHASE_KWS check.
-            if content and hits:
-                c_lower = content.lower()
-                if any(kw in c_lower for kw in _PURCHASE_KWS):
-                    product_link = _product_link_from_hits(hits)
-                    if product_link and product_link not in content:
-                        content = f"{content}\n\nBuy here: {product_link}"
-            # Bug 1b: safety net — never send empty body (wa2mation returns 422).
+            # Inject product link for purchase-intent text responses.
+            # This covers the non-throttled text path; the throttled media path above
+            # and the normal media path both handle injection too.
+            if content and hits and _has_purchase_intent(content):
+                product_link = _product_link_from_hits(hits)
+                content = _append_product_link(content, product_link)
+            # Safety net — never send empty body (wa2mation returns 422).
             if not (content or "").strip():
                 log.warning("DISPATCH | empty content for text response — sending fallback")
                 content = "I'm sorry, I couldn't retrieve that information. Please try again."
