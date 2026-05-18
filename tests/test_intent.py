@@ -915,3 +915,63 @@ def test_what_colors_after_non_inheritable_prior_stays_brand_discovery_INTENT14(
     # Greeting prior is non-inheritable — brand_discovery stands
     assert result["intent"] == IntentEnum.BRAND_DISCOVERY
     assert result["layer"] == "embedding"
+
+
+# ─── Bug 1 regression: "show me" / "can you show me" → specific_product ────────
+
+def test_show_me_resolves_to_specific_product_layer1():
+    """Bug 1 regression: 'can you show me' must hit the Layer 1 visual-request rule
+    and return specific_product — never fall through to brand_discovery_anchor."""
+    from app.intent import classify_intent, IntentEnum
+
+    result = classify_intent("can you show me", embedding=None, history=[])
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "rule"
+    assert result["confidence"] == 1.0
+
+
+def test_show_me_question_mark_resolves_to_specific_product_layer1():
+    """Bug 1 regression: 'can you show me?' (trailing punctuation) must also match."""
+    from app.intent import classify_intent, IntentEnum
+
+    result = classify_intent("can you show me?", embedding=None, history=[])
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "rule"
+
+
+def test_show_me_photo_resolves_to_specific_product_layer1():
+    """'show me a photo' — explicit image request resolves to specific_product."""
+    from app.intent import classify_intent, IntentEnum
+
+    result = classify_intent("show me a photo", embedding=None, history=[])
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "rule"
+
+
+def test_show_me_bypasses_brand_discovery_anchor(monkeypatch):
+    """Bug 1 regression: 'can you show me' must resolve to specific_product even when
+    history contains a product prior that would trigger brand_discovery_anchor."""
+    import app.intent as intent_module
+    from app.intent import classify_intent, IntentEnum
+
+    # Set up centroids that would normally give brand_discovery — anchor should not fire
+    brand_discovery_centroid = np.array([0.25] * 400 + [0.0] * 624)
+    monkeypatch.setattr(intent_module, "_intent_ready", True)
+    monkeypatch.setattr(intent_module, "_centroids", {"brand_discovery": brand_discovery_centroid})
+
+    history = [{"role": "user", "content": "tell me about cloud hexagon panel",
+                "intent": "specific_product"}]
+
+    result = classify_intent("can you show me", embedding=SAMPLE_EMBEDDING, history=history)
+    # Layer 1 rule fires first — brand_discovery_anchor never runs
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "rule"
+
+
+def test_show_me_named_product_resolves_to_specific_product_layer1():
+    """'show me the Cloud Hexagon' should resolve to specific_product via visual rule."""
+    from app.intent import classify_intent, IntentEnum
+
+    result = classify_intent("show me the Cloud Hexagon", embedding=None, history=[])
+    assert result["intent"] == IntentEnum.SPECIFIC_PRODUCT
+    assert result["layer"] == "rule"

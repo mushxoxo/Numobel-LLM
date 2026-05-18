@@ -12,7 +12,7 @@ import app.rag as rag
 from app.config import LLM_MODEL, EMBED_MODEL, CHROMA_DIR, PRODUCTS_COLLECTION, QNA_COLLECTION, QNA_OVERRIDE_THRESHOLD
 from app.intent import classify_intent, IntentEnum
 from app.log import get_logger
-from app.router import dispatch, _images_from_hits
+from app.router import dispatch, _images_from_hits, _product_name_from_hits
 from app.planner import plan_response
 from app.validators import validate_whatsapp_response, validate_response, AUTHORIZED_BRANDS
 from app.validators.hallucination import is_blocked_image_url
@@ -72,12 +72,14 @@ def _hit_entity_tokens(hits: list[dict]) -> set[str]:
     tokens: set[str] = set()
     for hit in hits:
         meta = hit.get("metadata", {})
-        for field in ("name", "brand", "product_line"):
+        for field in ("name", "brand", "product_line", "product_name"):
             value = meta.get(field) or ""
             for token in value.split():
                 tokens.add(token)
         # Also capture any capitalized tokens from the document text itself
-        doc = hit.get("document", "") or ""
+        # retrieve() returns hits with key "text"; guard with "document" fallback for
+        # any future callers that use a different key name.
+        doc = hit.get("text", "") or hit.get("document", "") or ""
         tokens.update(_ENTITY_TOKEN_RE.findall(doc))
     return tokens
 
@@ -305,8 +307,24 @@ def webhook():
             result.get("prompt_tokens", 0), result.get("completion_tokens", 0),
         )
         dispatch(phone, result, hits)
+
+        # Record per-turn product context so the router can throttle repeated
+        # media for the same product on follow-up questions. Recorded regardless
+        # of whether dispatch downgraded media to text — the context (product +
+        # image URL) is still what is "active" for this turn. A change in either
+        # field on a future turn signals a product context switch and re-allows
+        # media in the router.
+        assistant_entry: dict = {"role": "assistant", "content": result["content"]}
+        if result.get("message_type") == "media":
+            url = result.get("image_url") or ((_images_from_hits(hits) or [None])[0])
+            product_name = _product_name_from_hits(hits)
+            if url:
+                assistant_entry["image_url"] = url
+            if product_name:
+                assistant_entry["product_name"] = product_name
+
         history.append({"role": "user", "content": user_message, "intent": clf["intent"].value})
-        history.append({"role": "assistant", "content": result["content"]})
+        history.append(assistant_entry)
         save_history(phone, history)
 
         return jsonify({"status": "success"})

@@ -1,4 +1,5 @@
 import pytest
+import re
 
 _hmod = pytest.importorskip("app.validators.hallucination")
 _rmod = pytest.importorskip("app.validators.response")
@@ -21,6 +22,9 @@ NUTOY_PRODUCTS_HYPHENATED = [
     "Nutoy-On Wheels-Swan-Black",
     "Nutoy-On Wheels-Duck",
 ]
+
+# Regex mirroring webhook._ENTITY_TOKEN_RE — used by HALT-FP-01 test
+_ENTITY_TOKEN_RE = re.compile(r'\b[A-Z][a-z]{2,}(?:[A-Z][a-z]*)?\b')
 
 
 def _vr(content, user_query="hi", allowed_entities=None):
@@ -263,3 +267,88 @@ def test_context_fallback_generic_when_hits_empty():
     )
     assert result.valid is False
     assert "Could you ask about one of our brands" in result.fallback_content
+
+
+# ─── HALT-FP-01: _hit_entity_tokens used wrong key 'document' instead of 'text' ─
+
+def test_context_fallback_uses_chunk_text_when_available():
+    """_build_context_fallback prefers chunk text excerpt over metadata product-name sentence.
+
+    When hits contain a 'text' key (as returned by retrieve()), the fallback must
+    extract an excerpt from the chunk text rather than falling back to the generic
+    name+brand sentence. This provides a grounded, informative response.
+    """
+    initialize_validator(ALL_BRANDS)
+    hits = [{
+        "text": (
+            "Numobel PET acoustic panels are designer choice for vibrant interior looks. "
+            "The base material is Non-woven Polyester with Grooved and Embossed surface finishes."
+        ),
+        "metadata": {"product_name": "Numobel Acoustics-PET VG-1", "brand": "Nuacoustics"},
+    }]
+    result = validate_response(
+        content="Rubio Monocoat is similar to Asian Paints",
+        user_query="pet vg panels",
+        allowed_entities=set(),
+        response_plan={"message_type": "text"},
+        context_data={"history": [], "hits": hits},
+    )
+    assert result.valid is False
+    # Fallback must use the chunk text excerpt, not just the metadata product name sentence
+    assert "Numobel PET acoustic panels" in result.fallback_content, (
+        f"Expected chunk text excerpt in fallback. Got: {result.fallback_content!r}"
+    )
+
+
+def test_nuacoustics_material_terms_not_flagged_when_in_hit_text():
+    """HALT-FP-01: material/finish terms in product chunk text must not be flagged.
+
+    Root cause: _hit_entity_tokens() used hit.get('document') but retrieve() returns
+    hits with key 'text'. This prevented Non, Polyester, Grooved, Embossed from entering
+    allowed_entities even though they appear in the retrieved chunk text.
+
+    This test simulates what the webhook does: passes allowed_entities from
+    _hit_entity_tokens(hits) where hits use the 'text' key (the correct key).
+    """
+    initialize_validator(ALL_BRANDS)
+
+    hits = [{
+        "text": (
+            "The base material is Non-woven, Polyester strands compressed together. "
+            "There are many design variations - V Grooved and 3D Embossed."
+        ),
+        "metadata": {"product_name": "Numobel Acoustics-PET VG-1", "brand": "Nuacoustics"},
+    }]
+
+    # Replicate what webhook._hit_entity_tokens() does after the fix (uses 'text' key)
+    tokens: set[str] = set()
+    for hit in hits:
+        meta = hit.get("metadata", {})
+        for field in ("name", "brand", "product_line"):
+            value = meta.get(field) or ""
+            for token in value.split():
+                tokens.add(token)
+        doc = hit.get("text", "") or hit.get("document", "") or ""
+        tokens.update(_ENTITY_TOKEN_RE.findall(doc))
+
+    # All four formerly-flagged tokens must now be in allowed_entities
+    for term in ("Non", "Polyester", "Grooved", "Embossed"):
+        assert term in tokens, (
+            f"{term!r} must be extracted from hit 'text' into allowed_entities. "
+            f"Got tokens={sorted(tokens)}"
+        )
+
+    result = validate_response(
+        content=(
+            "The PET VG panels feature Non-woven Polyester material with Grooved and Embossed "
+            "surface finish options."
+        ),
+        user_query="what is the difference between the two",
+        allowed_entities=tokens,
+        response_plan={"message_type": "media"},
+        context_data={"history": [], "hits": hits},
+    )
+    assert result.valid is True, (
+        "HALT-FP-01 regression: material/finish terms from chunk text were still flagged. "
+        f"violations={result.violations}"
+    )

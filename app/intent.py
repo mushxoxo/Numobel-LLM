@@ -116,6 +116,14 @@ _BRAND_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Visual request phrases — "show me", "can you show me", "show me a photo", etc.
+# These bypass brand_discovery_anchor (INTENT-14) and resolve directly to specific_product
+# so the planner emits "media" and the user gets an image, not a text fallback.  (Bug 1 fix)
+_VISUAL_REQUEST_RE = re.compile(
+    r"(^(can (you )?)?show me|^(let me |can i |could i )?see (a |an )?(photo|image|picture|pic))",
+    re.IGNORECASE,
+)
+
 
 # ─── Private helpers ──────────────────────────────────────────────────────────
 
@@ -150,6 +158,8 @@ def _layer1_classify(text: str) -> "dict | None":
         return {"intent": IntentEnum.CHITCHAT, "confidence": 1.0, "layer": "rule"}
     if _BRAND_NAME_RE.fullmatch(t):
         return {"intent": IntentEnum.BRAND_DEEP_DIVE, "confidence": 1.0, "layer": "rule"}
+    if _VISUAL_REQUEST_RE.search(t):
+        return {"intent": IntentEnum.SPECIFIC_PRODUCT, "confidence": 1.0, "layer": "rule"}
     return None
 
 

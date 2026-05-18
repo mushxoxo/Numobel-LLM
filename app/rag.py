@@ -213,6 +213,13 @@ def rewrite_query(query: str, history: list[dict]) -> str:
         Given the following conversation history and a follow up question,
         rephrase the follow up question to be a standalone question.
 
+        Rules:
+        - Resolve pronouns and references (it, they, that) using the history.
+        - Do NOT inject or assume brand names, product names, or product lines
+          unless the user explicitly mentioned them in the follow-up question.
+        - If the follow-up introduces a new topic (e.g. kids, toys, outdoor),
+          form the standalone question around that new topic only.
+
         Chat History:
         {history_str}
 
@@ -271,7 +278,7 @@ def build_system_prompt(brands: list[str]) -> str:
           "message_type": "text" | "interactive" | "media" | "carousel",
           "content": "<your answer here>",
           "buttons": ["<label1>", "<label2>", "<label3>"] or null,
-          "image_url": "<url>" or null
+          "image_url": null
         }}
 
         MESSAGE TYPE RULES:
@@ -280,6 +287,10 @@ def build_system_prompt(brands: list[str]) -> str:
         - "carousel"    — use when showcasing 2+ products from the same product line.
         - "media"       — use when the user explicitly asks for an image, photo, or picture.
         - "text"        — use for all other answers (facts, specs, comparisons, prices).
+
+        IMAGE URL RULE:
+        - Always output "image_url": null. Never generate or invent image URLs.
+          Real image URLs come from the product catalogue, not from the LLM.
 
         CONTENT RULES:
         - Use ₹ symbol for all prices.
